@@ -21,7 +21,7 @@ import Config from '../common/Config.js';
 const TRAIL_MAX   = 16;  // トレイルの最大点数
 const MAX_AMMO    = 12;  // 装弾数
 const RELOAD_TIME = 1.8; // リロード時間(秒)
-const GRAVITY     = 3.5; // 弾の重力加速度(m/s²) ─ リアル感のため軽め
+const GRAVITY     = 0.8; // 弾の重力加速度(m/s²) ─ 弾速15m/sに対して自然な弧
 const TILT_THRESHOLD  = -0.65; // コントローラーの前方向Y成分がこれ以下でリロード傾き判定
 const TILT_HOLD_TIME  = 0.4;   // 傾きを何秒維持したらリロード開始
 
