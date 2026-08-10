@@ -237,30 +237,36 @@ export class SceneManager {
   _applyFbxMaterials(model, texturesPath) {
     const texLoader = new THREE.TextureLoader();
 
+    // ファイル名にスペースが含まれる場合に備えて encodeURIComponent でエンコード
     const load = (file, colorSpace = false) => new Promise((resolve) => {
+      const url = texturesPath + encodeURIComponent(file);
       texLoader.load(
-        `${texturesPath}${file}`,
+        url,
         (tex) => {
           if (colorSpace) tex.colorSpace = THREE.SRGBColorSpace;
           resolve(tex);
         },
         undefined,
-        () => resolve(null),
+        (err) => {
+          console.warn('[SceneManager] Texture load failed:', url, err);
+          resolve(null);
+        },
       );
     });
 
     model.traverse(async (child) => {
       if (!child.isMesh) return;
 
-      // 古いマテリアルを破棄して PBR マテリアルに差し替え
       const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
       const matName = (oldMat?.name ?? '').toLowerCase();
 
+      // デフォルト色を暗いグレーにする(テクスチャ未適用時に真っ白にならないよう)
       const stdMat = new THREE.MeshStandardMaterial({
         name: oldMat?.name ?? '',
-        roughness: 0.35,
-        metalness: 0.85,
-        envMapIntensity: 1.5,
+        color: 0x333333,
+        roughness: 0.4,
+        metalness: 0.7,
+        envMapIntensity: 0.8,
       });
       oldMat?.dispose();
       child.material = stdMat;
@@ -279,10 +285,10 @@ export class SceneManager {
         load('Pistol Emission.png', true),
       ]);
 
-      if (diffuse)   { stdMat.map = diffuse; }
-      if (normal)    { stdMat.normalMap = normal; stdMat.normalScale.set(1.5, 1.5); }
-      if (metallic)  { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
-      if (emission)  { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
+      if (diffuse)  { stdMat.map = diffuse; }
+      if (normal)   { stdMat.normalMap = normal; stdMat.normalScale.set(1.2, 1.2); }
+      if (metallic) { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
+      if (emission) { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
 
       stdMat.needsUpdate = true;
     });
