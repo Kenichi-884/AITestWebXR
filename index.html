@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MR Shooter - WebXR</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+    canvas { display: block; }
+
+    /* DOM Overlay: Meta QuestブラウザのAR上に重ねて表示されるUI層 */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    /* ===== メニュー画面 (担当: 営業/総務メンバー) ===== */
+    #menu-screen {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.75);
+      color: #fff;
+      pointer-events: all;
+    }
+    #menu-screen h1 {
+      font-size: 2.5rem;
+      margin-bottom: 0.5rem;
+      letter-spacing: 0.1em;
+    }
+    #menu-screen p.subtitle {
+      font-size: 1rem;
+      color: #aaa;
+      margin-bottom: 2rem;
+    }
+    .btn {
+      padding: 0.9rem 2.5rem;
+      font-size: 1.2rem;
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: bold;
+      transition: transform 0.1s, opacity 0.1s;
+    }
+    .btn:active { transform: scale(0.96); opacity: 0.85; }
+    .btn-primary { background: #e74c3c; color: #fff; }
+    .btn-secondary { background: #555; color: #fff; margin-top: 1rem; }
+    #xr-not-supported {
+      display: none;
+      color: #f00;
+      margin-top: 1rem;
+      font-size: 0.9rem;
+    }
+
+    /* ===== HUD (担当: 営業/総務メンバー) ===== */
+    #hud {
+      position: absolute;
+      inset: 0;
+      display: none;
+      pointer-events: none;
+    }
+    #score-display {
+      position: absolute;
+      top: 30px;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 2rem;
+      color: #fff;
+      text-shadow: 0 0 10px rgba(0,0,0,0.8);
+      font-weight: bold;
+    }
+    #health-bar-wrap {
+      position: absolute;
+      bottom: 60px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    #health-label { color: #fff; font-size: 0.9rem; }
+    #health-bar-bg {
+      width: 200px;
+      height: 14px;
+      background: rgba(255,255,255,0.2);
+      border-radius: 7px;
+      overflow: hidden;
+    }
+    #health-bar {
+      height: 100%;
+      width: 100%;
+      background: #2ecc71;
+      border-radius: 7px;
+      transition: width 0.3s, background 0.3s;
+    }
+    #wave-display {
+      position: absolute;
+      top: 80px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #f39c12;
+      font-size: 1rem;
+      font-weight: bold;
+    }
+    #ammo-display {
+      position: absolute;
+      bottom: 100px;
+      right: 40px;
+      color: #fff;
+      font-size: 1.1rem;
+    }
+
+    /* ===== リザルト画面 (担当: 営業/総務メンバー) ===== */
+    #result-screen {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      background: rgba(0, 0, 0, 0.8);
+      color: #fff;
+      pointer-events: all;
+    }
+    #result-screen h2 { font-size: 2rem; margin-bottom: 0.5rem; }
+    #result-score { font-size: 3rem; color: #f1c40f; margin: 1rem 0; font-weight: bold; }
+    #result-wave { color: #aaa; margin-bottom: 2rem; }
+
+    /* ===== 照準 ===== */
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 20px;
+      height: 20px;
+      display: none;
+    }
+    #crosshair::before, #crosshair::after {
+      content: '';
+      position: absolute;
+      background: rgba(255,255,255,0.8);
+    }
+    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
+    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
+  </style>
+</head>
+<body>
+  <canvas id="canvas"></canvas>
+
+  <!-- DOM Overlay root: AR中もこのdivの中身がオーバーレイ表示される -->
+  <div id="overlay">
+
+    <!-- メニュー画面 -->
+    <div id="menu-screen">
+      <h1>MR SHOOTER</h1>
+      <p class="subtitle">Meta Quest WebXR - Mixed Reality</p>
+      <button class="btn btn-primary" id="btn-start-xr">AR モードで開始</button>
+      <button class="btn btn-secondary" id="btn-start-desktop">デスクトップで試す</button>
+      <p id="xr-not-supported">このデバイスはWebXR ARをサポートしていません</p>
+    </div>
+
+    <!-- HUD -->
+    <div id="hud">
+      <div id="score-display">SCORE: <span id="score-value">0</span></div>
+      <div id="wave-display">WAVE <span id="wave-value">1</span></div>
+      <div id="ammo-display">AMMO: <span id="ammo-value">∞</span></div>
+      <div id="health-bar-wrap">
+        <span id="health-label">HP</span>
+        <div id="health-bar-bg">
+          <div id="health-bar"></div>
+        </div>
+      </div>
+      <div id="crosshair"></div>
+    </div>
+
+    <!-- リザルト画面 -->
+    <div id="result-screen">
+      <h2>GAME OVER</h2>
+      <div id="result-score">0</div>
+      <div id="result-wave">WAVE <span id="result-wave-value">1</span> まで到達</div>
+      <button class="btn btn-primary" id="btn-restart">もう一度</button>
+      <button class="btn btn-secondary" id="btn-to-menu">メニューへ</button>
+    </div>
+
+  </div>
+
+  <script type="module" src="/src/engine/App.js"></script>
+</body>
+</html>

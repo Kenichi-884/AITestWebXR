@@ -1,0 +1,76 @@
+{
+  "_comment": "シーンレイアウト設定ファイル - 担当: 3Dアセット配置・シーンレイアウト担当メンバー",
+  "_guide": [
+    "このファイルを編集してオブジェクトの配置を変えられます",
+    "コードの知識は不要です。数値を変えるだけで位置・サイズ・色が変わります",
+    "position: [X, Y, Z]  ← X=左右, Y=上下, Z=前後(マイナスで手前)",
+    "rotation: [X, Y, Z]  ← 各軸の回転(度数)",
+    "scale: [X, Y, Z]     ← 各軸のスケール(1.0が等倍)",
+    "color: 16進数カラーコード (例: '#ff0000' = 赤)"
+  ],
+
+  "ambient": {
+    "fogEnabled": true,
+    "fogColor": "#000011",
+    "skyColor": "#000011"
+  },
+
+  "staticObjects": [
+    {
+      "_comment": "床(プレイヤーの足元に表示、ARではパススルーなので通常は非表示)",
+      "type": "plane",
+      "id": "floor",
+      "visible": false,
+      "position": [0, -1.5, 0],
+      "rotation": [-90, 0, 0],
+      "scale": [20, 20, 1],
+      "color": "#222222"
+    },
+    {
+      "_comment": "方向指示用のマーカー(前方を示す矢印状の床マーク)",
+      "type": "box",
+      "id": "forward-marker",
+      "visible": false,
+      "position": [0, -1.4, -2],
+      "rotation": [0, 0, 0],
+      "scale": [0.1, 0.02, 0.5],
+      "color": "#00ff88"
+    }
+  ],
+
+  "spawnZones": [
+    {
+      "_comment": "敵スポーンゾーン定義(現在はEnemySpawner.jsの設定が優先されます)",
+      "id": "zone-front",
+      "center": [0, 0, -4],
+      "radius": 2.0
+    },
+    {
+      "id": "zone-left",
+      "center": [-4, 0, 0],
+      "radius": 2.0
+    },
+    {
+      "id": "zone-right",
+      "center": [4, 0, 0],
+      "radius": 2.0
+    },
+    {
+      "id": "zone-back",
+      "center": [0, 0, 4],
+      "radius": 2.0
+    }
+  ],
+
+  "weapon": {
+    "_comment": "武器モデルの表示設定。FBXファイルをそのまま読み込む",
+    "_note": "GLBに変換すると読み込みが速くなる。Blenderで File→Export→glTF2.0 で変換可能",
+    "modelPath": "/assets/pistol/models/",
+    "modelFile": "Pistol 92.fbx",
+    "texturesPath": "/assets/pistol/textures/",
+    "hand": "right",
+    "position": [0.05, -0.1, -0.2],
+    "rotation": [0, 0, 0],
+    "scale": [0.003, 0.003, 0.003]
+  }
+}

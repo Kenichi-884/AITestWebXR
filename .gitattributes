@@ -1,0 +1,14 @@
+# WindowsとmacOSの改行コード差異を自動吸収する設定
+# Gitが自動でLF(Unix標準)に統一するので、OSを跨いでも差分が発生しない
+
+* text=auto eol=lf
+
+# バイナリファイルは変換しない
+*.fbx    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.glb    binary
+*.gltf   binary
