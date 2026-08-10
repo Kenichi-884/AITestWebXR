@@ -46,7 +46,10 @@ const Config = Object.freeze({
     BULLET_SPEED: 15.0,       // 弾速 (m/s)
     BULLET_LIFETIME: 3.0,     // 弾の生存時間 (秒)
     COOLDOWN: 0.3,            // 連射クールダウン (秒)
-    BULLET_RADIUS: 0.05,      // 弾のサイズ (m)
+    BULLET_RADIUS: 0.05,      // 弾のサイズ (m) ─ 当たり判定にも使用
+    MAX_AMMO: 12,             // 装弾数
+    RELOAD_TIME: 1.8,         // リロード時間 (秒)
+    BULLET_GRAVITY: 0.8,      // 弾の重力加速度 (m/s²) ─ 0にすると直線飛行
   },
 
   // ----- シーン -----

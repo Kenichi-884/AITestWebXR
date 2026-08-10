@@ -18,12 +18,10 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 
-const TRAIL_MAX   = 16;  // トレイルの最大点数
-const MAX_AMMO    = 12;  // 装弾数
-const RELOAD_TIME = 1.8; // リロード時間(秒)
-const GRAVITY     = 0.8; // 弾の重力加速度(m/s²) ─ 弾速15m/sに対して自然な弧
-const TILT_THRESHOLD  = -0.65; // コントローラーの前方向Y成分がこれ以下でリロード傾き判定
-const TILT_HOLD_TIME  = 0.4;   // 傾きを何秒維持したらリロード開始
+const TRAIL_MAX      = 16;    // トレイルの最大点数
+const TILT_THRESHOLD = -0.65; // コントローラーの前方向Y成分がこれ以下でリロード傾き判定
+const TILT_HOLD_TIME = 0.4;   // 傾きを何秒維持したらリロード開始
+// ゲームバランス値は Config.WEAPON で管理 (src/common/Config.js)
 
 /** @typedef {{ mesh: THREE.Object3D, velocity: THREE.Vector3, lifetime: number, active: boolean, trail: THREE.Line, trailPos: Float32Array, trailLen: number }} Bullet */
 
@@ -44,7 +42,7 @@ export class Weapon {
     this._isActive = false;
 
     // 弾数管理
-    this._ammo        = MAX_AMMO;
+    this._ammo        = Config.WEAPON.MAX_AMMO;
     this._isReloading = false;
     this._reloadTimer = 0;
     this._tiltTimer   = 0; // コントローラー傾き持続時間
@@ -65,7 +63,7 @@ export class Weapon {
     this._isActive    = true;
     this._bullets     = [];
     this._cooldown    = 0;
-    this._ammo        = MAX_AMMO;
+    this._ammo        = Config.WEAPON.MAX_AMMO;
     this._isReloading = false;
     this._reloadTimer = 0;
     this._tiltTimer   = 0;
@@ -84,7 +82,7 @@ export class Weapon {
     this._bullets     = [];
     this._cooldown    = 0;
     this._isActive    = false;
-    this._ammo        = MAX_AMMO;
+    this._ammo        = Config.WEAPON.MAX_AMMO;
     this._isReloading = false;
     this._reloadTimer = 0;
     this._tiltTimer   = 0;
@@ -101,7 +99,7 @@ export class Weapon {
     if (this._isReloading) {
       this._reloadTimer -= delta;
       if (this._reloadTimer <= 0) {
-        this._ammo        = MAX_AMMO;
+        this._ammo        = Config.WEAPON.MAX_AMMO;
         this._isReloading = false;
         this._emitAmmo();
       }
@@ -116,7 +114,7 @@ export class Weapon {
       if (!bullet.active) continue;
 
       // 重力で弾道を弧にする
-      bullet.velocity.y -= GRAVITY * delta;
+      bullet.velocity.y -= Config.WEAPON.BULLET_GRAVITY * delta;
       bullet.mesh.position.addScaledVector(bullet.velocity, delta);
 
       // トレイル: 先頭に現在位置を挿入、末尾を押し出す
@@ -275,15 +273,15 @@ export class Weapon {
   }
 
   _startReload() {
-    if (this._isReloading || this._ammo === MAX_AMMO) return;
+    if (this._isReloading || this._ammo === Config.WEAPON.MAX_AMMO) return;
     this._isReloading = true;
-    this._reloadTimer = RELOAD_TIME;
-    EventBus.emit('weapon:reloading', { reloadTime: RELOAD_TIME });
+    this._reloadTimer = Config.WEAPON.RELOAD_TIME;
+    EventBus.emit('weapon:reloading', { reloadTime: Config.WEAPON.RELOAD_TIME });
     EventBus.emit('sound:play', { id: 'reload' });
   }
 
   _emitAmmo() {
-    EventBus.emit('weapon:ammo-update', { ammo: this._ammo, max: MAX_AMMO, reloading: this._isReloading });
+    EventBus.emit('weapon:ammo-update', { ammo: this._ammo, max: Config.WEAPON.MAX_AMMO, reloading: this._isReloading });
   }
 
   // ─── 弾の生成 ────────────────────────────────────────────

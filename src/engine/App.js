@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { SceneManager } from './SceneManager.js';
 import { EnemySpawner } from '../gameplay/EnemySpawner.js';
 import { Weapon } from '../gameplay/Weapon.js';
+import { EffectManager } from '../effects/EffectManager.js';
 import { HUD } from '../screens/HUD.js';
 import { MenuScreen } from '../screens/MenuScreen.js';
 import { SoundManager } from '../sounds/SoundManager.js';
@@ -48,10 +49,11 @@ class App {
     this._renderer.toneMappingExposure = 1.0;
 
     // ── モジュール初期化 ─────────────────────────────────────
-    this._sceneManager = new SceneManager(this._renderer);
-    this._soundManager = new SoundManager();
-    this._enemySpawner = new EnemySpawner(this._sceneManager.scene);
-    this._weapon = new Weapon(this._sceneManager.scene, this._renderer, this._sceneManager.camera);
+    this._sceneManager  = new SceneManager(this._renderer);
+    this._soundManager  = new SoundManager();
+    this._effectManager = new EffectManager(this._sceneManager.scene);
+    this._enemySpawner  = new EnemySpawner(this._sceneManager.scene);
+    this._weapon        = new Weapon(this._sceneManager.scene, this._renderer, this._sceneManager.camera);
     this._hud = new HUD();
     this._menu = new MenuScreen({
       onStartXR:      () => this._startXR(),
@@ -279,6 +281,7 @@ class App {
       this._sceneManager.camera.getWorldPosition(playerPos);
 
       this._sceneManager.update(delta);
+      this._effectManager.update(delta);
       this._weapon.update(delta);
       this._enemySpawner.update(delta, playerPos);
       this._weapon.checkCollisions(this._enemySpawner.getEnemies());
