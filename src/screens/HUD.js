@@ -29,13 +29,17 @@ export class HUD {
     this._healthBarEl = document.getElementById('health-bar');
     this._crosshairEl = document.getElementById('crosshair');
 
+    this._reloadEl    = document.getElementById('reload-indicator');
+
     this._score = 0;
     this._health = Config.PLAYER.MAX_HEALTH;
 
     // EventBusからの自動更新を購読
-    EventBus.on('game:score-update', this._onScoreUpdate.bind(this));
+    EventBus.on('game:score-update',  this._onScoreUpdate.bind(this));
     EventBus.on('game:health-update', this._onHealthUpdate.bind(this));
-    EventBus.on('game:wave-update', this._onWaveUpdate.bind(this));
+    EventBus.on('game:wave-update',   this._onWaveUpdate.bind(this));
+    EventBus.on('weapon:ammo-update', this._onAmmoUpdate.bind(this));
+    EventBus.on('weapon:reloading',   this._onReloading.bind(this));
   }
 
   /**
@@ -64,6 +68,8 @@ export class HUD {
     this._updateScoreDisplay();
     this._updateHealthDisplay();
     this._updateWaveDisplay(1);
+    if (this._ammoEl) this._ammoEl.textContent = '12 / 12';
+    if (this._reloadEl) { this._reloadEl.style.display = 'none'; }
   }
 
   /**
@@ -112,6 +118,23 @@ export class HUD {
       this._healthBarEl.style.background = '#f39c12'; // 黄
     } else {
       this._healthBarEl.style.background = '#e74c3c'; // 赤
+    }
+  }
+
+  _onAmmoUpdate({ ammo, max }) {
+    if (this._ammoEl) this._ammoEl.textContent = `${ammo} / ${max}`;
+    if (this._reloadEl) this._reloadEl.style.display = 'none';
+    // 残弾0で赤くする
+    if (this._ammoEl) {
+      this._ammoEl.style.color = ammo === 0 ? '#e74c3c' : '#fff';
+    }
+  }
+
+  _onReloading({ reloadTime }) {
+    if (this._ammoEl) { this._ammoEl.textContent = '-- / --'; this._ammoEl.style.color = '#f39c12'; }
+    if (this._reloadEl) {
+      this._reloadEl.style.display = 'block';
+      this._reloadEl.style.animationDuration = `${reloadTime}s`;
     }
   }
 

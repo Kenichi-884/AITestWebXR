@@ -110,10 +110,35 @@
     }
     #ammo-display {
       position: absolute;
-      bottom: 100px;
-      right: 40px;
+      bottom: 110px;
+      left: 40px;
       color: #fff;
-      font-size: 1.1rem;
+      font-size: 1.3rem;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 8px rgba(0,0,0,0.9);
+    }
+    #ammo-label {
+      font-size: 0.75rem;
+      color: #aaa;
+      display: block;
+      margin-bottom: 2px;
+      letter-spacing: 0.1em;
+    }
+    #reload-indicator {
+      display: none;
+      position: absolute;
+      bottom: 80px;
+      left: 40px;
+      color: #f39c12;
+      font-size: 0.9rem;
+      font-weight: bold;
+      letter-spacing: 0.08em;
+      animation: reloadPulse 0.6s ease-in-out infinite alternate;
+    }
+    @keyframes reloadPulse {
+      from { opacity: 0.5; }
+      to   { opacity: 1.0; }
     }
 
     /* ===== リザルト画面 (担当: 営業/総務メンバー) ===== */
@@ -170,7 +195,11 @@
     <div id="hud">
       <div id="score-display">SCORE: <span id="score-value">0</span></div>
       <div id="wave-display">WAVE <span id="wave-value">1</span></div>
-      <div id="ammo-display">AMMO: <span id="ammo-value">∞</span></div>
+      <div id="ammo-display">
+        <span id="ammo-label">AMMO</span>
+        <span id="ammo-value">12 / 12</span>
+      </div>
+      <div id="reload-indicator">↺ RELOADING...</div>
       <div id="health-bar-wrap">
         <span id="health-label">HP</span>
         <div id="health-bar-bg">

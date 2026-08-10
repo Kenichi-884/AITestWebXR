@@ -376,7 +376,7 @@ export class SceneManager {
     const t = Math.min(anim.elapsed / anim.duration, 1);
 
     // 前半40%: スライドが後退、後半60%: 前進して戻る
-    const TRAVEL = 50; // FBX単位 (scale 0.0002 適用後 ≈ 1cm)
+    const TRAVEL = 90; // FBX単位 (scale 0.0002 適用後 ≈ 1.8cm)
     const offset = t < 0.4
       ? (t / 0.4) * TRAVEL
       : ((1 - t) / 0.6) * TRAVEL;

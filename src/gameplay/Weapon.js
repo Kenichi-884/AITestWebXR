@@ -18,7 +18,12 @@ import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 
-const TRAIL_MAX = 16; // トレイルの最大点数
+const TRAIL_MAX   = 16;  // トレイルの最大点数
+const MAX_AMMO    = 12;  // 装弾数
+const RELOAD_TIME = 1.8; // リロード時間(秒)
+const GRAVITY     = 3.5; // 弾の重力加速度(m/s²) ─ リアル感のため軽め
+const TILT_THRESHOLD  = -0.65; // コントローラーの前方向Y成分がこれ以下でリロード傾き判定
+const TILT_HOLD_TIME  = 0.4;   // 傾きを何秒維持したらリロード開始
 
 /** @typedef {{ mesh: THREE.Object3D, velocity: THREE.Vector3, lifetime: number, active: boolean, trail: THREE.Line, trailPos: Float32Array, trailLen: number }} Bullet */
 
@@ -38,6 +43,12 @@ export class Weapon {
     this._cooldown = 0;
     this._isActive = false;
 
+    // 弾数管理
+    this._ammo        = MAX_AMMO;
+    this._isReloading = false;
+    this._reloadTimer = 0;
+    this._tiltTimer   = 0; // コントローラー傾き持続時間
+
     /** @type {THREE.BufferGeometry|null} */
     this._bulletGeo = null;
     /** @type {THREE.Material|null} */
@@ -51,9 +62,14 @@ export class Weapon {
   // ─── ライフサイクル ───────────────────────────────────────
 
   start() {
-    this._isActive = true;
-    this._bullets  = [];
-    this._cooldown = 0;
+    this._isActive    = true;
+    this._bullets     = [];
+    this._cooldown    = 0;
+    this._ammo        = MAX_AMMO;
+    this._isReloading = false;
+    this._reloadTimer = 0;
+    this._tiltTimer   = 0;
+    this._emitAmmo();
   }
 
   stop() {
@@ -65,9 +81,13 @@ export class Weapon {
       if (b.mesh.parent) this.scene.remove(b.mesh);
       this._removeTrail(b);
     }
-    this._bullets  = [];
-    this._cooldown = 0;
-    this._isActive = false;
+    this._bullets     = [];
+    this._cooldown    = 0;
+    this._isActive    = false;
+    this._ammo        = MAX_AMMO;
+    this._isReloading = false;
+    this._reloadTimer = 0;
+    this._tiltTimer   = 0;
   }
 
   // ─── 毎フレーム処理 ──────────────────────────────────────
@@ -77,9 +97,26 @@ export class Weapon {
 
     if (this._cooldown > 0) this._cooldown -= delta;
 
+    // リロード処理
+    if (this._isReloading) {
+      this._reloadTimer -= delta;
+      if (this._reloadTimer <= 0) {
+        this._ammo        = MAX_AMMO;
+        this._isReloading = false;
+        this._emitAmmo();
+      }
+    }
+
+    // XR: コントローラー傾きでリロード
+    if (this.renderer.xr.isPresenting) {
+      this._checkReloadTilt(delta);
+    }
+
     for (const bullet of this._bullets) {
       if (!bullet.active) continue;
 
+      // 重力で弾道を弧にする
+      bullet.velocity.y -= GRAVITY * delta;
       bullet.mesh.position.addScaledVector(bullet.velocity, delta);
 
       // トレイル: 先頭に現在位置を挿入、末尾を押し出す
@@ -202,22 +239,65 @@ export class Weapon {
 
   _setupDesktopInput() {
     window.addEventListener('click', () => {
-      if (!this._isActive) return;           // ゲームプレイ中のみ
-      if (this.renderer.xr.isPresenting) return; // XR中はコントローラーで射撃
-
+      if (!this._isActive) return;
+      if (this.renderer.xr.isPresenting) return;
       const position  = new THREE.Vector3();
       const direction = new THREE.Vector3(0, 0, -1);
       this.camera.getWorldPosition(position);
       direction.applyQuaternion(this.camera.quaternion);
       this._spawnBullet(position, direction);
     });
+
+    window.addEventListener('keydown', (e) => {
+      if (e.code !== 'KeyR' || !this._isActive || this.renderer.xr.isPresenting) return;
+      this._startReload();
+    });
+  }
+
+  /**
+   * XR: 右コントローラーを下に向けたままにするとリロード開始
+   */
+  _checkReloadTilt(delta) {
+    const controller = this.renderer.xr.getController(1); // 右手
+    const quat = new THREE.Quaternion();
+    controller.getWorldQuaternion(quat);
+    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+
+    if (forward.y < TILT_THRESHOLD) {
+      this._tiltTimer += delta;
+      if (this._tiltTimer >= TILT_HOLD_TIME) {
+        this._tiltTimer = 0;
+        this._startReload();
+      }
+    } else {
+      this._tiltTimer = 0;
+    }
+  }
+
+  _startReload() {
+    if (this._isReloading || this._ammo === MAX_AMMO) return;
+    this._isReloading = true;
+    this._reloadTimer = RELOAD_TIME;
+    EventBus.emit('weapon:reloading', { reloadTime: RELOAD_TIME });
+    EventBus.emit('sound:play', { id: 'reload' });
+  }
+
+  _emitAmmo() {
+    EventBus.emit('weapon:ammo-update', { ammo: this._ammo, max: MAX_AMMO, reloading: this._isReloading });
   }
 
   // ─── 弾の生成 ────────────────────────────────────────────
 
   _spawnBullet(position, direction) {
     if (this._cooldown > 0) return;
+    if (this._isReloading) return;
+    if (this._ammo <= 0) {
+      this._startReload();
+      return;
+    }
     this._cooldown = Config.WEAPON.COOLDOWN;
+    this._ammo--;
+    this._emitAmmo();
 
     const mesh     = this._createBulletMesh();
     const velocity = direction.clone().normalize().multiplyScalar(Config.WEAPON.BULLET_SPEED);
