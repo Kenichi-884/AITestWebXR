@@ -160,11 +160,14 @@ export class Weapon {
 
   /**
    * デスクトップ: マウスクリックで射撃(開発・テスト用)
+   * Pointer Lock 中のクリックのみ受け付ける
+   * (UI ボタンのクリックで誤射しないようにするため)
    */
   _setupDesktopInput() {
     window.addEventListener('click', () => {
       if (!this._isActive) return;
-      if (this.renderer.xr.isPresenting) return; // XR中はスキップ
+      if (this.renderer.xr.isPresenting) return;
+      if (!document.pointerLockElement) return; // Pointer Lock 中のみ射撃
 
       const position = new THREE.Vector3();
       const direction = new THREE.Vector3(0, 0, -1);

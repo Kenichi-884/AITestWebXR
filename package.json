@@ -8,8 +8,8 @@
     "preview": "vite preview --host"
   },
   "dependencies": {
-    "three": "^0.167.0",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "three": "^0.167.0"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.1.0",

@@ -4,10 +4,10 @@
  * 担当: シーン・アセット管理担当メンバー
  *
  * 作業ガイド:
- *   - ライティング変更 → _setupLighting()
- *   - layout.json からの静的オブジェクト読み込み → _loadLayout()
- *   - 3Dモデル(GLTFLoader) → _loadWeaponModel()
- *   - コントローラーのビジュアル → _setupControllers()
+ *   - ライティング変更         → _setupLighting()
+ *   - 武器の位置・サイズ調整   → public/assets/layout.json の xr / desktop セクション
+ *   - 3Dモデル差し替え        → layout.json の modelFile を変更
+ *   - デスクトップ/XR切替     → App.js から setWeaponMode() を呼ぶ
  *
  * このファイルで触るもの: このファイルのみ
  * ============================================================
@@ -16,103 +16,144 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import Config from '../common/Config.js';
 
 export class SceneManager {
-  /**
-   * @param {THREE.WebGLRenderer} renderer
-   */
+  /** @param {THREE.WebGLRenderer} renderer */
   constructor(renderer) {
     this.renderer = renderer;
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(70, window.innerWidth / window.innerHeight, 0.01, 100);
 
-    /** @type {THREE.Group|null} モデルロード済みの武器グループ */
+    /** @type {THREE.Object3D|null} */
     this.weaponModel = null;
+    /** @type {object|null} layout.json の weapon 設定 */
+    this._weaponConfig = null;
+    /** @type {'xr'|'desktop'} */
+    this._weaponMode = 'xr';
 
     this._controllerGrips = [];
     this._controllerRays = [];
 
+    // デスクトップ用: カメラに追従する武器ホルダー
+    this._desktopWeaponHolder = new THREE.Group();
+    this.camera.add(this._desktopWeaponHolder);
+
     this._setupScene();
     this._setupLighting();
+    this._setupEnvironment();
     this._setupControllers();
     this._loadLayout();
 
     window.addEventListener('resize', this._onResize.bind(this));
   }
 
-  /**
-   * シーンの基本設定
-   */
+  // ─── シーン基本設定 ───────────────────────────────────────
+
   _setupScene() {
     this.scene.background = null; // AR(パススルー)用に透明
-    // デスクトップデバッグ用のフォグ(AR中は見えない)
-    this.scene.fog = new THREE.Fog(
-      Config.SCENE.FOG_NEAR,
-      Config.SCENE.FOG_FAR,
-    );
+    this.scene.fog = new THREE.Fog(0x111122, Config.SCENE.FOG_NEAR, Config.SCENE.FOG_FAR);
   }
 
-  /**
-   * ライティングのセットアップ
-   * TODO: ここを変えて雰囲気を変えられる
-   */
   _setupLighting() {
-    const ambient = new THREE.AmbientLight(0xffffff, Config.SCENE.AMBIENT_LIGHT_INTENSITY);
-    this.scene.add(ambient);
+    this.scene.add(new THREE.AmbientLight(0xffffff, Config.SCENE.AMBIENT_LIGHT_INTENSITY));
 
     const dirLight = new THREE.DirectionalLight(0xffffff, Config.SCENE.DIR_LIGHT_INTENSITY);
     dirLight.position.set(3, 5, 3);
     dirLight.castShadow = true;
     this.scene.add(dirLight);
 
-    // アクセント用の青いライト(未来感)
     const accentLight = new THREE.PointLight(0x0044ff, 0.3, 10);
     accentLight.position.set(-3, 2, -3);
     this.scene.add(accentLight);
   }
 
   /**
-   * XRコントローラーのビジュアルセットアップ
-   * コントローラーの先端から照準線を表示
+   * PBR 用の環境マップをセットアップする
+   * 金属面の反射品質が向上する
    */
+  _setupEnvironment() {
+    const pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.scene.environment = pmrem.fromScene(new RoomEnvironment()).texture;
+    pmrem.dispose();
+  }
+
+  // ─── XR コントローラー ────────────────────────────────────
+
   _setupControllers() {
     for (let i = 0; i < 2; i++) {
       const controller = this.renderer.xr.getController(i);
       this.scene.add(controller);
 
-      // 照準線(レーザーポインター)
       const ray = this._createControllerRay();
       controller.add(ray);
       this._controllerRays.push(ray);
 
-      // コントローラーグリップ(将来的に武器モデルをアタッチする用)
       const grip = this.renderer.xr.getControllerGrip(i);
       this.scene.add(grip);
       this._controllerGrips.push(grip);
     }
   }
 
-  /**
-   * コントローラーの照準線メッシュを作成
-   * @returns {THREE.Line}
-   */
   _createControllerRay() {
-    const geometry = new THREE.BufferGeometry().setFromPoints([
+    const geo = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(0, 0, 0),
       new THREE.Vector3(0, 0, -10),
     ]);
-    const material = new THREE.LineBasicMaterial({
-      color: 0xff4444,
-      transparent: true,
-      opacity: 0.6,
-    });
-    return new THREE.Line(geometry, material);
+    return new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: 0xff4444, transparent: true, opacity: 0.6,
+    }));
+  }
+
+  // ─── 武器モード切替 (App.js から呼ぶ) ────────────────────
+
+  /**
+   * 武器をXR用/デスクトップ用に切り替える
+   * @param {'xr'|'desktop'} mode
+   */
+  setWeaponMode(mode) {
+    this._weaponMode = mode;
+
+    // デスクトップではコントローラーのレーザーを非表示
+    for (const ray of this._controllerRays) {
+      ray.visible = mode === 'xr';
+    }
+
+    if (this.weaponModel) this._attachWeapon(mode);
   }
 
   /**
-   * layout.json を読み込んで静的オブジェクトを配置する
+   * 武器モデルを指定モードの親にアタッチし、位置・回転・スケールを適用する
+   * 位置などの数値は layout.json の xr / desktop セクションで管理
+   * @param {'xr'|'desktop'} mode
    */
+  _attachWeapon(mode) {
+    if (!this.weaponModel || !this._weaponConfig) return;
+
+    // 現在の親から切り離す
+    this.weaponModel.parent?.remove(this.weaponModel);
+
+    const cfg = this._weaponConfig[mode] ?? this._weaponConfig.xr;
+
+    if (mode === 'desktop') {
+      this._desktopWeaponHolder.add(this.weaponModel);
+    } else {
+      const handIndex = this._weaponConfig.hand === 'left' ? 0 : 1;
+      this._controllerGrips[handIndex]?.add(this.weaponModel);
+    }
+
+    this.weaponModel.position.set(...cfg.position);
+    this.weaponModel.rotation.set(
+      THREE.MathUtils.degToRad(cfg.rotation[0]),
+      THREE.MathUtils.degToRad(cfg.rotation[1]),
+      THREE.MathUtils.degToRad(cfg.rotation[2]),
+    );
+    this.weaponModel.scale.set(...cfg.scale);
+  }
+
+  // ─── レイアウト / モデル読み込み ─────────────────────────
+
   async _loadLayout() {
     try {
       const res = await fetch('/assets/layout.json');
@@ -124,57 +165,40 @@ export class SceneManager {
         if (mesh) this.scene.add(mesh);
       }
 
-      // 武器モデルのパスを layout.json から取得してロード
       if (layout.weapon?.modelFile) {
-        const modelPath = `${layout.weapon.modelPath}${layout.weapon.modelFile}`;
-        await this._loadWeaponModel(modelPath, layout.weapon);
+        const path = `${layout.weapon.modelPath}${layout.weapon.modelFile}`;
+        await this._loadWeaponModel(path, layout.weapon);
       }
     } catch (e) {
-      console.warn('[SceneManager] layout.json の読み込みに失敗:', e);
+      console.warn('[SceneManager] layout.json load failed:', e);
     }
   }
 
-  /**
-   * layout.json の定義から THREE.Mesh を生成する
-   * @param {object} def
-   * @returns {THREE.Mesh|null}
-   */
   _createStaticObject(def) {
     let geometry;
     switch (def.type) {
-      case 'plane': geometry = new THREE.PlaneGeometry(1, 1); break;
-      case 'box':   geometry = new THREE.BoxGeometry(1, 1, 1); break;
-      case 'sphere':geometry = new THREE.SphereGeometry(0.5, 16, 16); break;
+      case 'plane':  geometry = new THREE.PlaneGeometry(1, 1); break;
+      case 'box':    geometry = new THREE.BoxGeometry(1, 1, 1); break;
+      case 'sphere': geometry = new THREE.SphereGeometry(0.5, 16, 16); break;
       default: return null;
     }
-
-    const material = new THREE.MeshPhongMaterial({
-      color: new THREE.Color(def.color ?? '#888888'),
-    });
-    const mesh = new THREE.Mesh(geometry, material);
-
+    const mesh = new THREE.Mesh(
+      geometry,
+      new THREE.MeshStandardMaterial({ color: new THREE.Color(def.color ?? '#888888') }),
+    );
     if (def.position) mesh.position.set(...def.position);
-    if (def.rotation) {
-      mesh.rotation.set(
-        THREE.MathUtils.degToRad(def.rotation[0]),
-        THREE.MathUtils.degToRad(def.rotation[1]),
-        THREE.MathUtils.degToRad(def.rotation[2]),
-      );
-    }
+    if (def.rotation) mesh.rotation.set(
+      ...def.rotation.map(THREE.MathUtils.degToRad),
+    );
     if (def.scale) mesh.scale.set(...def.scale);
-
     return mesh;
   }
 
   /**
-   * 武器モデル(FBX/GLB)をロードしてコントローラーグリップにアタッチする
-   * @param {string} path - モデルファイルのパス
-   * @param {object} weaponConfig - layout.json の weapon 設定
+   * FBX / GLB モデルを読み込んでコントローラーまたはカメラにアタッチする
    *
-   * NOTE: FBX は Three.js の FBXLoader で読み込める。
-   *   ただしファイルサイズが大きい場合は Blender で GLB に変換すると
-   *   読み込みが速く、テクスチャも自動でまとめられるのでオススメ。
-   *   変換方法: Blender → File → Export → glTF2.0(.glb)
+   * NOTE: FBX → GLB 変換(Blender: File → Export → glTF 2.0)で
+   *       読み込みが速くなり、テクスチャも自動でまとめられる。
    */
   async _loadWeaponModel(path, weaponConfig) {
     const ext = path.split('.').pop().toLowerCase();
@@ -183,122 +207,107 @@ export class SceneManager {
     try {
       let model;
       if (ext === 'fbx') {
-        // FBXLoaderは直接GroupオブジェクトをPromiseで返さないため変換
-        model = await new Promise((resolve, reject) => {
-          loader.load(path, resolve, undefined, reject);
-        });
-      } else {
-        const gltf = await loader.loadAsync(path);
-        model = gltf.scene;
-      }
-
-      // テクスチャを適用(FBXの場合、テクスチャパスが相対参照になることがあるため手動設定)
-      if (ext === 'fbx' && weaponConfig.texturesPath) {
-        this._applyFbxTextures(model, weaponConfig.texturesPath);
-      }
-
-      // スケール・位置・回転を layout.json の設定から適用
-      if (weaponConfig.scale) model.scale.set(...weaponConfig.scale);
-      if (weaponConfig.position) model.position.set(...weaponConfig.position);
-      if (weaponConfig.rotation) {
-        model.rotation.set(
-          THREE.MathUtils.degToRad(weaponConfig.rotation[0]),
-          THREE.MathUtils.degToRad(weaponConfig.rotation[1]),
-          THREE.MathUtils.degToRad(weaponConfig.rotation[2]),
+        model = await new Promise((resolve, reject) =>
+          loader.load(path, resolve, undefined, reject),
         );
-      }
-
-      // 右手コントローラーグリップにアタッチ(handedness: 'right' = index 1)
-      const gripIndex = weaponConfig.hand === 'left' ? 0 : 1;
-      if (this._controllerGrips[gripIndex]) {
-        this._controllerGrips[gripIndex].add(model);
+        this._applyFbxMaterials(model, weaponConfig.texturesPath);
+      } else {
+        model = (await loader.loadAsync(path)).scene;
       }
 
       this.weaponModel = model;
-      console.log('[SceneManager] 武器モデルをロードしました:', path);
+      this._weaponConfig = weaponConfig;
+      this._attachWeapon(this._weaponMode);
+      console.log('[SceneManager] Weapon loaded:', path);
     } catch (e) {
-      console.warn('[SceneManager] 武器モデルのロードに失敗(プレースホルダーを使用):', e);
+      console.warn('[SceneManager] Weapon load failed, using placeholder:', e);
       this._createPlaceholderWeapon(weaponConfig);
     }
   }
 
   /**
-   * FBXモデルにテクスチャを手動で適用する
-   * FBXのマテリアルがテクスチャを見つけられない場合のフォールバック
-   * @param {THREE.Group} model
-   * @param {string} texturesPath
+   * FBX モデルの全マテリアルを MeshStandardMaterial (PBR) に置き換え、
+   * テクスチャを適用する
+   *
+   * MeshStandardMaterial を使う理由:
+   *   - 環境マップによる金属反射が自動で適用される
+   *   - roughness / metalness で物理ベースのリアルな質感が出る
+   *   - MeshPhongMaterial より照明の計算が正確
    */
-  _applyFbxTextures(model, texturesPath) {
-    const loader = new THREE.TextureLoader();
-    model.traverse((child) => {
-      if (!child.isMesh) return;
-      const mat = child.material;
-      if (!mat) return;
+  _applyFbxMaterials(model, texturesPath) {
+    const texLoader = new THREE.TextureLoader();
 
-      // Diffuseテクスチャ: マテリアル名に Black/Dark/White が含まれるか判定
-      const name = (mat.name || '').toLowerCase();
-      let diffuseFile = 'Pistol Black Diffuse.png'; // デフォルト
-      if (name.includes('dark'))  diffuseFile = 'Pistol Dark Diffuse.png';
-      if (name.includes('white')) diffuseFile = 'Pistol White Diffuse.png';
-
-      loader.load(
-        `${texturesPath}${diffuseFile}`,
-        (tex) => { mat.map = tex; mat.needsUpdate = true; },
+    const load = (file, colorSpace = false) => new Promise((resolve) => {
+      texLoader.load(
+        `${texturesPath}${file}`,
+        (tex) => {
+          if (colorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+          resolve(tex);
+        },
         undefined,
-        () => {} // テクスチャが見つからなくても無視
+        () => resolve(null),
       );
+    });
 
-      // Normalマップ
-      loader.load(
-        `${texturesPath}Pistol Normal.png`,
-        (tex) => { mat.normalMap = tex; mat.needsUpdate = true; },
-      );
+    model.traverse(async (child) => {
+      if (!child.isMesh) return;
 
-      // Metallicマップ
-      loader.load(
-        `${texturesPath}Pistol Metallic.png`,
-        (tex) => { mat.metalnessMap = tex; mat.roughnessMap = tex; mat.needsUpdate = true; },
-      );
+      // 古いマテリアルを破棄して PBR マテリアルに差し替え
+      const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
+      const matName = (oldMat?.name ?? '').toLowerCase();
 
-      // Emissionマップ
-      loader.load(
-        `${texturesPath}Pistol Emission.png`,
-        (tex) => { mat.emissiveMap = tex; mat.emissive = new THREE.Color(0x111111); mat.needsUpdate = true; },
-      );
+      const stdMat = new THREE.MeshStandardMaterial({
+        name: oldMat?.name ?? '',
+        roughness: 0.35,
+        metalness: 0.85,
+        envMapIntensity: 1.5,
+      });
+      oldMat?.dispose();
+      child.material = stdMat;
+      child.castShadow = true;
+      child.receiveShadow = true;
+
+      // Diffuse: マテリアル名で色バリエーションを判定
+      let diffuseFile = 'Pistol Black Diffuse.png';
+      if (matName.includes('dark'))  diffuseFile = 'Pistol Dark Diffuse.png';
+      if (matName.includes('white')) diffuseFile = 'Pistol White Diffuse.png';
+
+      const [diffuse, normal, metallic, emission] = await Promise.all([
+        load(diffuseFile, true),
+        load('Pistol Normal.png'),
+        load('Pistol Metallic.png'),
+        load('Pistol Emission.png', true),
+      ]);
+
+      if (diffuse)   { stdMat.map = diffuse; }
+      if (normal)    { stdMat.normalMap = normal; stdMat.normalScale.set(1.5, 1.5); }
+      if (metallic)  { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
+      if (emission)  { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
+
+      stdMat.needsUpdate = true;
     });
   }
 
   /**
-   * モデルが無い場合のプレースホルダー武器(Box)
-   * @param {object} weaponConfig
+   * モデルが読み込めない場合のプレースホルダー(灰色のBox)
    */
   _createPlaceholderWeapon(weaponConfig) {
-    const geometry = new THREE.BoxGeometry(0.05, 0.08, 0.2);
-    const material = new THREE.MeshPhongMaterial({ color: 0x444444 });
-    const mesh = new THREE.Mesh(geometry, material);
-
-    if (weaponConfig.position) mesh.position.set(...weaponConfig.position);
-
-    const gripIndex = weaponConfig.hand === 'left' ? 0 : 1;
-    if (this._controllerGrips[gripIndex]) {
-      this._controllerGrips[gripIndex].add(mesh);
-    }
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.05, 0.08, 0.2),
+      new THREE.MeshStandardMaterial({ color: 0x555555, roughness: 0.5, metalness: 0.8 }),
+    );
+    this.weaponModel = mesh;
+    this._weaponConfig = weaponConfig;
+    this._attachWeapon(this._weaponMode);
   }
 
-  /**
-   * ウィンドウリサイズ対応
-   */
+  // ─── リサイズ / リセット ──────────────────────────────────
+
   _onResize() {
     this.camera.aspect = window.innerWidth / window.innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(window.innerWidth, window.innerHeight);
   }
 
-  /**
-   * シーンをリセットする
-   */
-  reset() {
-    // 動的に追加されたオブジェクトを除去(ライト・コントローラーは残す)
-    // 敵と弾は各モジュールで管理されているので、ここでは何もしない
-  }
+  reset() {}
 }
