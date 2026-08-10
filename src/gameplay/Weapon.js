@@ -124,9 +124,9 @@ export class Weapon {
    * ロード失敗時は黄色い球のフォールバックを使用
    */
   async _loadBulletModel() {
-    const modelUrl  = '/assets/pistol/models/'   + encodeURIComponent('Pistol BulletShell.fbx');
-    const diffuseUrl = '/assets/pistol/textures/' + encodeURIComponent('Pistol BulletTex.png');
-    const metalUrl   = '/assets/pistol/textures/' + encodeURIComponent('Pistol Bullet Metallic.png');
+    const modelUrl   = '/assets/pistol/models/Pistol BulletShell.fbx';
+    const diffuseUrl = '/assets/pistol/textures/Pistol BulletTex.png';
+    const metalUrl   = '/assets/pistol/textures/Pistol Bullet Metallic.png';
 
     try {
       const model = await new Promise((resolve, reject) =>
@@ -200,9 +200,8 @@ export class Weapon {
 
   _setupDesktopInput() {
     window.addEventListener('click', () => {
-      if (!this._isActive) return;
-      if (this.renderer.xr.isPresenting) return;
-      if (!document.pointerLockElement) return; // Pointer Lock 中のみ射撃
+      if (!this._isActive) return;           // ゲームプレイ中のみ
+      if (this.renderer.xr.isPresenting) return; // XR中はコントローラーで射撃
 
       const position  = new THREE.Vector3();
       const direction = new THREE.Vector3(0, 0, -1);

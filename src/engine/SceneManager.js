@@ -57,6 +57,10 @@ export class SceneManager {
   }
 
   _setupLighting() {
+    // HemisphereLight: MeshStandardMaterial の PBR に必要な環境光
+    const hemi = new THREE.HemisphereLight(0xffffff, 0x444466, 0.8);
+    this.scene.add(hemi);
+
     this.scene.add(new THREE.AmbientLight(0xffffff, Config.SCENE.AMBIENT_LIGHT_INTENSITY));
 
     const dirLight = new THREE.DirectionalLight(0xffffff, Config.SCENE.DIR_LIGHT_INTENSITY);
@@ -237,9 +241,8 @@ export class SceneManager {
   _applyFbxMaterials(model, texturesPath) {
     const texLoader = new THREE.TextureLoader();
 
-    // ファイル名にスペースが含まれる場合に備えて encodeURIComponent でエンコード
     const load = (file, colorSpace = false) => new Promise((resolve) => {
-      const url = texturesPath + encodeURIComponent(file);
+      const url = texturesPath + file;
       texLoader.load(
         url,
         (tex) => {
@@ -247,9 +250,21 @@ export class SceneManager {
           resolve(tex);
         },
         undefined,
-        (err) => {
-          console.warn('[SceneManager] Texture load failed:', url, err);
-          resolve(null);
+        () => {
+          // スペース入りファイル名を %20 エンコードして再試行
+          const encodedUrl = texturesPath + encodeURIComponent(file);
+          texLoader.load(
+            encodedUrl,
+            (tex) => {
+              if (colorSpace) tex.colorSpace = THREE.SRGBColorSpace;
+              resolve(tex);
+            },
+            undefined,
+            (err) => {
+              console.warn('[SceneManager] Texture load failed:', encodedUrl, err);
+              resolve(null);
+            },
+          );
         },
       );
     });
