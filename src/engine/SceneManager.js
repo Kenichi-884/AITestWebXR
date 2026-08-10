@@ -242,29 +242,16 @@ export class SceneManager {
     const texLoader = new THREE.TextureLoader();
 
     const load = (file, colorSpace = false) => new Promise((resolve) => {
-      const url = texturesPath + file;
       texLoader.load(
-        url,
+        texturesPath + file,
         (tex) => {
           if (colorSpace) tex.colorSpace = THREE.SRGBColorSpace;
           resolve(tex);
         },
         undefined,
-        () => {
-          // スペース入りファイル名を %20 エンコードして再試行
-          const encodedUrl = texturesPath + encodeURIComponent(file);
-          texLoader.load(
-            encodedUrl,
-            (tex) => {
-              if (colorSpace) tex.colorSpace = THREE.SRGBColorSpace;
-              resolve(tex);
-            },
-            undefined,
-            (err) => {
-              console.warn('[SceneManager] Texture load failed:', encodedUrl, err);
-              resolve(null);
-            },
-          );
+        (err) => {
+          console.warn('[SceneManager] Texture load failed:', texturesPath + file, err);
+          resolve(null);
         },
       );
     });
@@ -289,15 +276,15 @@ export class SceneManager {
       child.receiveShadow = true;
 
       // Diffuse: マテリアル名で色バリエーションを判定
-      let diffuseFile = 'Pistol Black Diffuse.png';
-      if (matName.includes('dark'))  diffuseFile = 'Pistol Dark Diffuse.png';
-      if (matName.includes('white')) diffuseFile = 'Pistol White Diffuse.png';
+      let diffuseFile = 'pistol-black-diffuse.png';
+      if (matName.includes('dark'))  diffuseFile = 'pistol-dark-diffuse.png';
+      if (matName.includes('white')) diffuseFile = 'pistol-white-diffuse.png';
 
       const [diffuse, normal, metallic, emission] = await Promise.all([
         load(diffuseFile, true),
-        load('Pistol Normal.png'),
-        load('Pistol Metallic.png'),
-        load('Pistol Emission.png', true),
+        load('pistol-normal.png'),
+        load('pistol-metallic.png'),
+        load('pistol-emission.png', true),
       ]);
 
       if (diffuse)  { stdMat.map = diffuse; }

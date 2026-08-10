@@ -38,7 +38,7 @@
     "_comment": "Weapon model settings. Adjust xr / desktop separately.",
     "_note": "Converting FBX to GLB (Blender: File > Export > glTF 2.0) improves load speed.",
     "modelPath": "/assets/pistol/models/",
-    "modelFile": "Pistol 92.fbx",
+    "modelFile": "pistol-92.fbx",
     "texturesPath": "/assets/pistol/textures/",
     "hand": "right",
 
@@ -46,7 +46,7 @@
       "_comment": "Meta Quest controller grip attachment",
       "_tip": "If gun faces wrong way, adjust rotation Y in 90-degree increments",
       "position": [0.0, -0.02, 0.05],
-      "rotation": [-10, 270, 0],
+      "rotation": [-90, 270, 0],
       "scale": [0.0002, 0.0002, 0.0002]
     },
 

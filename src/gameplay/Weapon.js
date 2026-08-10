@@ -4,7 +4,7 @@
  * 担当: 武器・射撃担当メンバー
  *
  * 作業ガイド:
- *   - コントローラーのトリガー入力 → _handleControllerInput()
+ *   - コントローラーのトリガー入力 → _setupXRInput() (selectstart イベント)
  *   - デスクトップではクリックで射撃 → _setupDesktopInput()
  *   - 弾の見た目変更 → _createBulletMesh()
  *   - 当たり判定は App.js から checkCollisions() を呼んで行う
@@ -35,7 +35,6 @@ export class Weapon {
     this._bullets = [];
     this._cooldown = 0;
     this._isActive = false;
-    this._triggerPressed = [false, false]; // [left, right]
 
     // 薬莢モデルの共有ジオメトリ・マテリアル(非同期ロード)
     this._bulletGeo = null;
@@ -43,6 +42,7 @@ export class Weapon {
     this._loadBulletModel();
 
     this._setupDesktopInput();
+    this._setupXRInput();
   }
 
   // ─── ライフサイクル ───────────────────────────────────────
@@ -64,18 +64,14 @@ export class Weapon {
     this._bullets  = [];
     this._cooldown = 0;
     this._isActive = false;
-    this._triggerPressed = [false, false];
   }
 
   // ─── 毎フレーム処理 ──────────────────────────────────────
 
-  update(delta, frame) {
+  update(delta) {
     if (!this._isActive) return;
 
     if (this._cooldown > 0) this._cooldown -= delta;
-
-    // XR コントローラー入力
-    if (frame) this._handleControllerInput(frame);
 
     // 弾の移動・寿命
     for (const bullet of this._bullets) {
@@ -124,9 +120,9 @@ export class Weapon {
    * ロード失敗時は黄色い球のフォールバックを使用
    */
   async _loadBulletModel() {
-    const modelUrl   = '/assets/pistol/models/Pistol BulletShell.fbx';
-    const diffuseUrl = '/assets/pistol/textures/Pistol BulletTex.png';
-    const metalUrl   = '/assets/pistol/textures/Pistol Bullet Metallic.png';
+    const modelUrl   = '/assets/pistol/models/pistol-bullet-shell.fbx';
+    const diffuseUrl = '/assets/pistol/textures/pistol-bullet-tex.png';
+    const metalUrl   = '/assets/pistol/textures/pistol-bullet-metallic.png';
 
     try {
       const model = await new Promise((resolve, reject) =>
@@ -168,22 +164,13 @@ export class Weapon {
 
   // ─── コントローラー入力 ──────────────────────────────────
 
-  _handleControllerInput(frame) {
-    const session = this.renderer.xr.getSession();
-    if (!session) return;
-
-    for (const source of session.inputSources) {
-      if (!source.gamepad) continue;
-
-      const triggerValue = source.gamepad.buttons[0]?.value ?? 0;
-      const handIndex    = source.handedness === 'left' ? 0 : 1;
-      const wasPressed   = this._triggerPressed[handIndex];
-      const isPressed    = triggerValue > 0.5;
-
-      if (isPressed && (!wasPressed || this._cooldown <= 0)) {
-        this._fireFromController(this.renderer.xr.getController(handIndex));
-      }
-      this._triggerPressed[handIndex] = isPressed;
+  _setupXRInput() {
+    for (let i = 0; i < 2; i++) {
+      const controller = this.renderer.xr.getController(i);
+      controller.addEventListener('selectstart', () => {
+        if (!this._isActive) return;
+        this._fireFromController(controller);
+      });
     }
   }
 
