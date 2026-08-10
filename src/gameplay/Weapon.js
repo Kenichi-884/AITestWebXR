@@ -93,8 +93,10 @@ export class Weapon {
       tp[1] = bullet.mesh.position.y;
       tp[2] = bullet.mesh.position.z;
       bullet.trailLen = Math.min(bullet.trailLen + 1, TRAIL_MAX);
-      bullet.trailGeo.setDrawRange(0, bullet.trailLen);
-      bullet.trailGeo.attributes.position.needsUpdate = true;
+      if (bullet.trailGeo) {
+        bullet.trailGeo.setDrawRange(0, bullet.trailLen);
+        bullet.trailGeo.attributes.position.needsUpdate = true;
+      }
 
       bullet.lifetime -= delta;
       if (bullet.lifetime <= 0) {

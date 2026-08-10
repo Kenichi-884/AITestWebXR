@@ -259,6 +259,14 @@ class App {
     const delta = Math.min((time - this._lastTime) / 1000, 0.1);
     this._lastTime = time;
 
+    try { this._update(delta, frame); } catch (err) {
+      console.error('[App] frame error:', err);
+    }
+
+    this._renderer.render(this._sceneManager.scene, this._sceneManager.camera);
+  }
+
+  _update(delta, frame) {
     if (this._state === STATE.PLAYING) {
       // デスクトップ: マウスルックでカメラ回転
       if (this._isDesktopMode) {
@@ -277,8 +285,6 @@ class App {
       this._weapon.cleanup();
       this._enemySpawner.cleanup();
     }
-
-    this._renderer.render(this._sceneManager.scene, this._sceneManager.camera);
   }
 }
 

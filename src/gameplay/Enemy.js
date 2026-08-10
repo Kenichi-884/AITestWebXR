@@ -61,16 +61,12 @@ export class Enemy {
     const material = new THREE.MeshPhongMaterial({
       color,
       emissive: color,
-      emissiveIntensity: 0.3,
+      emissiveIntensity: 0.6,
       shininess: 80,
     });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
-
-    // 敵の周囲に光を追加(存在感を出す)
-    const light = new THREE.PointLight(color, 0.5, 1.5);
-    mesh.add(light);
 
     return mesh;
   }

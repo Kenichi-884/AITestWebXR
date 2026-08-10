@@ -230,7 +230,7 @@ export class SceneManager {
 
       this.weaponModel = model;
       this._weaponConfig = weaponConfig;
-      this._findSlideNode(model);
+      this._findSlideNode(model, weaponConfig.slideNodeName ?? '');
       this._attachWeapon(this._weaponMode);
       console.log('[SceneManager] Weapon loaded:', path);
     } catch (e) {
@@ -322,31 +322,44 @@ export class SceneManager {
   // ─── スライドアニメーション ───────────────────────────────
 
   /**
-   * モデル内から "slide" を含むノードを探してキャッシュする
-   * 見つからない場合はコンソールに全ノード名を出力する
+   * モデル内からスライドノードを探してキャッシュする
+   *
+   * 優先順位:
+   *   1. layout.json の weapon.slideNodeName が設定されている場合はその名前で検索
+   *   2. キーワード ("slide" / "bolt" など) を含む名前を自動検索
+   *   3. 見つからない場合は全ノード名をコンソールに出力する
+   *
    * @param {THREE.Object3D} model
+   * @param {string} [overrideName] layout.json の slideNodeName
    */
-  _findSlideNode(model) {
+  _findSlideNode(model, overrideName = '') {
     const allNames = [];
     const SLIDE_KEYWORDS = ['slide', 'slider', 'bolt', 'action', 'reciprocating'];
 
     model.traverse((child) => {
       const name = child.name;
-      if (name) allNames.push(`${child.type}: "${name}"`);
+      allNames.push(`${child.type}: "${name}"`);
 
-      if (!this._slideNode && name) {
+      if (this._slideNode) return;
+
+      if (overrideName && name === overrideName) {
+        this._slideNode = child;
+        this._slideBaseZ = child.position.z;
+        console.log('[SceneManager] Slide node found (layout.json override):', name);
+      } else if (!overrideName && name) {
         const lower = name.toLowerCase();
         if (SLIDE_KEYWORDS.some((kw) => lower.includes(kw))) {
           this._slideNode = child;
           this._slideBaseZ = child.position.z;
-          console.log('[SceneManager] Slide node found:', name);
+          console.log('[SceneManager] Slide node found (auto):', name);
         }
       }
     });
 
     if (!this._slideNode) {
-      console.warn('[SceneManager] Slide node not found. All model nodes:');
-      allNames.forEach((n) => console.warn(' ', n));
+      console.warn('[SceneManager] Slide node not found.');
+      console.warn('[SceneManager] Set weapon.slideNodeName in layout.json to one of these:');
+      allNames.forEach((n) => console.warn('  ', n));
     }
   }
 

@@ -41,6 +41,8 @@
     "modelFile": "pistol-92.fbx",
     "texturesPath": "/assets/pistol/textures/",
     "hand": "right",
+    "_slideNote": "ブラウザのコンソールに全ノード名が表示されます。スライドのノード名をslideNodeNameに設定してください。",
+    "slideNodeName": "",
 
     "xr": {
       "_comment": "Meta Quest controller grip attachment",
