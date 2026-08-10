@@ -42,7 +42,7 @@
     "texturesPath": "/assets/pistol/textures/",
     "hand": "right",
     "_slideNote": "ブラウザのコンソールに全ノード名が表示されます。スライドのノード名をslideNodeNameに設定してください。",
-    "slideNodeName": "Cube003",
+    "slideNodeName": "Cube001",
 
     "xr": {
       "_comment": "Meta Quest controller grip attachment",
