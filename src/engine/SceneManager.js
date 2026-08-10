@@ -323,19 +323,30 @@ export class SceneManager {
 
   /**
    * モデル内から "slide" を含むノードを探してキャッシュする
+   * 見つからない場合はコンソールに全ノード名を出力する
    * @param {THREE.Object3D} model
    */
   _findSlideNode(model) {
+    const allNames = [];
+    const SLIDE_KEYWORDS = ['slide', 'slider', 'bolt', 'action', 'reciprocating'];
+
     model.traverse((child) => {
-      if (this._slideNode) return;
-      if (child.name.toLowerCase().includes('slide')) {
-        this._slideNode = child;
-        this._slideBaseZ = child.position.z;
-        console.log('[SceneManager] Slide node found:', child.name);
+      const name = child.name;
+      if (name) allNames.push(`${child.type}: "${name}"`);
+
+      if (!this._slideNode && name) {
+        const lower = name.toLowerCase();
+        if (SLIDE_KEYWORDS.some((kw) => lower.includes(kw))) {
+          this._slideNode = child;
+          this._slideBaseZ = child.position.z;
+          console.log('[SceneManager] Slide node found:', name);
+        }
       }
     });
+
     if (!this._slideNode) {
-      console.warn('[SceneManager] No slide node found in weapon model.');
+      console.warn('[SceneManager] Slide node not found. All model nodes:');
+      allNames.forEach((n) => console.warn(' ', n));
     }
   }
 
