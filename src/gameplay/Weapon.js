@@ -14,10 +14,11 @@
  */
 
 import * as THREE from 'three';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 
-const TRAIL_MAX = 14; // トレイルの最大点数
+const TRAIL_MAX = 16; // トレイルの最大点数
 
 /** @typedef {{ mesh: THREE.Object3D, velocity: THREE.Vector3, lifetime: number, active: boolean, trail: THREE.Line, trailPos: Float32Array, trailLen: number }} Bullet */
 
@@ -36,6 +37,12 @@ export class Weapon {
     this._bullets = [];
     this._cooldown = 0;
     this._isActive = false;
+
+    /** @type {THREE.BufferGeometry|null} */
+    this._bulletGeo = null;
+    /** @type {THREE.Material|null} */
+    this._bulletMat = null;
+    this._loadBulletModel();
 
     this._setupDesktopInput();
     this._setupXRInput();
@@ -86,8 +93,8 @@ export class Weapon {
       tp[1] = bullet.mesh.position.y;
       tp[2] = bullet.mesh.position.z;
       bullet.trailLen = Math.min(bullet.trailLen + 1, TRAIL_MAX);
-      bullet.trail.geometry.setDrawRange(0, bullet.trailLen);
-      bullet.trail.geometry.attributes.position.needsUpdate = true;
+      bullet.trailGeo.setDrawRange(0, bullet.trailLen);
+      bullet.trailGeo.attributes.position.needsUpdate = true;
 
       bullet.lifetime -= delta;
       if (bullet.lifetime <= 0) {
@@ -118,6 +125,54 @@ export class Weapon {
 
   cleanup() {
     this._bullets = this._bullets.filter((b) => b.active);
+  }
+
+  // ─── 弾モデルのロード ─────────────────────────────────────
+
+  /**
+   * 薬莢FBXを非同期ロードしてジオメトリ・マテリアルをキャッシュする
+   * ロード完了後は _createBulletMesh() でFBXメッシュが使われる
+   */
+  async _loadBulletModel() {
+    try {
+      const model = await new Promise((resolve, reject) =>
+        new FBXLoader().load('/assets/pistol/models/pistol-bullet-shell.fbx', resolve, undefined, reject),
+      );
+
+      let geo = null;
+      model.traverse((child) => {
+        if (child.isMesh && !geo) {
+          geo = child.geometry;
+          // FBX由来のマテリアルを確実に破棄
+          const mats = Array.isArray(child.material) ? child.material : [child.material];
+          mats.forEach((m) => m?.dispose());
+        }
+      });
+      if (!geo) throw new Error('No mesh in bullet FBX');
+
+      // 真鍮/金色の薬莢マテリアル
+      const mat = new THREE.MeshStandardMaterial({
+        color: 0xc8930a,
+        roughness: 0.25,
+        metalness: 0.95,
+        transparent: false,
+        depthWrite: true,
+      });
+      const texLoader = new THREE.TextureLoader();
+      texLoader.load('/assets/pistol/textures/pistol-bullet-tex.png', (tex) => {
+        tex.colorSpace = THREE.SRGBColorSpace;
+        mat.map = tex; mat.needsUpdate = true;
+      });
+      texLoader.load('/assets/pistol/textures/pistol-bullet-metallic.png', (tex) => {
+        mat.metalnessMap = tex; mat.roughnessMap = tex; mat.needsUpdate = true;
+      });
+
+      this._bulletGeo = geo;
+      this._bulletMat = mat;
+      console.log('[Weapon] Bullet shell loaded.');
+    } catch (e) {
+      console.warn('[Weapon] Bullet shell load failed:', e);
+    }
   }
 
   // ─── コントローラー入力 ──────────────────────────────────
@@ -167,22 +222,29 @@ export class Weapon {
     mesh.position.copy(position);
     this.scene.add(mesh);
 
-    // トレイルライン
+    // トレイル: 明るいコアライン + 薄いアウターラインで輝き感を出す
     const trailPos = new Float32Array(TRAIL_MAX * 3);
     const trailGeo = new THREE.BufferGeometry();
     trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
     trailGeo.setDrawRange(0, 0);
-    const trail = new THREE.Line(
+    const trailCore = new THREE.Line(
       trailGeo,
-      new THREE.LineBasicMaterial({ color: 0xff7700, transparent: true, opacity: 0.55 }),
+      new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9 }),
     );
+    // 同じジオメトリを共有するアウター（色違い・低opacity）
+    const trailOuter = new THREE.Line(
+      trailGeo,
+      new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.35 }),
+    );
+    const trail = new THREE.Group();
+    trail.add(trailCore, trailOuter);
     this.scene.add(trail);
 
     this._bullets.push({
       mesh, velocity,
       lifetime: Config.WEAPON.BULLET_LIFETIME,
       active: true,
-      trail, trailPos, trailLen: 0,
+      trail, trailPos, trailLen: 0, trailGeo,
     });
 
     EventBus.emit('weapon:fired', { position: position.clone(), direction: direction.clone() });
@@ -190,36 +252,34 @@ export class Weapon {
   }
 
   /**
-   * 発光トレーサー弾メッシュを生成する
-   * MeshBasicMaterial で照明無関係に常に発光して見える
+   * 弾メッシュを生成する
+   * FBX薬莢がロード済みであればそれを使用、未ロード時は黄金球にフォールバック
    */
   _createBulletMesh() {
-    const group = new THREE.Group();
+    if (this._bulletGeo && this._bulletMat) {
+      const mesh = new THREE.Mesh(this._bulletGeo, this._bulletMat);
+      mesh.castShadow = false;
+      // layout.json の weapon.scale (0.0002) と同じ倍率でピストルに揃える
+      mesh.scale.setScalar(0.0002);
+      return mesh;
+    }
 
-    // コア: 明るい発光球
-    group.add(new THREE.Mesh(
-      new THREE.SphereGeometry(0.018, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xffcc00 }),
-    ));
-
-    // 外側のハロー（やや大きく半透明）
-    group.add(new THREE.Mesh(
-      new THREE.SphereGeometry(0.032, 8, 8),
-      new THREE.MeshBasicMaterial({ color: 0xff6600, transparent: true, opacity: 0.3 }),
-    ));
-
-    // グロー用ポイントライト
-    group.add(new THREE.PointLight(0xff8800, 2.0, 1.8));
-
-    return group;
+    // フォールバック: 金色の球
+    const mesh = new THREE.Mesh(
+      new THREE.SphereGeometry(0.012, 8, 8),
+      new THREE.MeshStandardMaterial({ color: 0xc8930a, roughness: 0.2, metalness: 0.9 }),
+    );
+    return mesh;
   }
 
   /** トレイルをシーンから削除してリソースを解放する */
   _removeTrail(bullet) {
     if (!bullet.trail) return;
     this.scene.remove(bullet.trail);
-    bullet.trail.geometry.dispose();
-    bullet.trail.material.dispose();
+    // trail は Group。ジオメトリは共有なので1回だけ dispose
+    bullet.trailGeo?.dispose();
+    bullet.trail.children.forEach((line) => line.material.dispose());
     bullet.trail = null;
+    bullet.trailGeo = null;
   }
 }
