@@ -333,41 +333,24 @@ export class SceneManager {
    * @param {string} [overrideName] layout.json の slideNodeName
    */
   _findSlideNode(model, overrideName = '') {
-    const allNames = [];
     const SLIDE_KEYWORDS = ['slide', 'slider', 'bolt', 'action', 'reciprocating'];
 
     model.traverse((child) => {
-      const name = child.name;
-      allNames.push(`${child.type}: "${name}"`);
-
       if (this._slideNode) return;
-
-      if (overrideName && name === overrideName) {
-        this._slideNode = child;
-        this._slideBaseZ = child.position.z;
-        console.log('[SceneManager] Slide node found (layout.json override):', name);
-      } else if (!overrideName && name) {
+      const name = child.name;
+      if (overrideName) {
+        if (name === overrideName) {
+          this._slideNode = child;
+          this._slideBaseZ = child.position.z;
+        }
+      } else if (name) {
         const lower = name.toLowerCase();
         if (SLIDE_KEYWORDS.some((kw) => lower.includes(kw))) {
           this._slideNode = child;
           this._slideBaseZ = child.position.z;
-          console.log('[SceneManager] Slide node found (auto):', name);
         }
       }
     });
-
-    if (!this._slideNode) {
-      console.warn('[SceneManager] Slide node not found.');
-      console.warn('[SceneManager] Set weapon.slideNodeName in layout.json. Meshes with sizes:');
-      const bb = new THREE.Box3();
-      const sz = new THREE.Vector3();
-      model.traverse((child) => {
-        if (!child.isMesh) return;
-        bb.setFromObject(child);
-        bb.getSize(sz);
-        console.warn(`  Mesh: "${child.name}" — ${sz.x.toFixed(1)}×${sz.y.toFixed(1)}×${sz.z.toFixed(1)}`);
-      });
-    }
   }
 
   _triggerSlideAnim() {
