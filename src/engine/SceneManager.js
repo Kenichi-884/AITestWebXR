@@ -358,8 +358,15 @@ export class SceneManager {
 
     if (!this._slideNode) {
       console.warn('[SceneManager] Slide node not found.');
-      console.warn('[SceneManager] Set weapon.slideNodeName in layout.json to one of these:');
-      allNames.forEach((n) => console.warn('  ', n));
+      console.warn('[SceneManager] Set weapon.slideNodeName in layout.json. Meshes with sizes:');
+      const bb = new THREE.Box3();
+      const sz = new THREE.Vector3();
+      model.traverse((child) => {
+        if (!child.isMesh) return;
+        bb.setFromObject(child);
+        bb.getSize(sz);
+        console.warn(`  Mesh: "${child.name}" — ${sz.x.toFixed(1)}×${sz.y.toFixed(1)}×${sz.z.toFixed(1)}`);
+      });
     }
   }
 
