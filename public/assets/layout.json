@@ -42,6 +42,8 @@
     "texturesPath": "/assets/pistol/textures/",
     "hand": "right",
     "slideNodeName": "Cube001",
+    "_slideAxisNote": "スライドの移動軸: x / y / z (マイナスにしたい場合は -x / -y / -z)",
+    "slideAxis": "x",
 
     "xr": {
       "_comment": "Meta Quest controller grip attachment",

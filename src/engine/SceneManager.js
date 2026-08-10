@@ -37,7 +37,8 @@ export class SceneManager {
     // スライドアニメーション
     /** @type {THREE.Object3D|null} */
     this._slideNode = null;
-    this._slideBaseZ = 0;
+    this._slideBase = 0;   // スライド軸の初期値
+    this._slideAxis = 'x'; // 移動軸 ('x'|'y'|'z'|'-x'|'-y'|'-z')
     this._slideAnim = null; // { elapsed, duration }
 
     EventBus.on('weapon:fired', () => this._triggerSlideAnim());
@@ -230,6 +231,7 @@ export class SceneManager {
 
       this.weaponModel = model;
       this._weaponConfig = weaponConfig;
+      this._slideAxis = weaponConfig.slideAxis ?? 'x';
       this._findSlideNode(model, weaponConfig.slideNodeName ?? '');
       this._attachWeapon(this._weaponMode);
       console.log('[SceneManager] Weapon loaded:', path);
@@ -341,16 +343,22 @@ export class SceneManager {
       if (overrideName) {
         if (name === overrideName) {
           this._slideNode = child;
-          this._slideBaseZ = child.position.z;
+          this._slideBase = this._getPosOnAxis(child.position);
         }
       } else if (name) {
         const lower = name.toLowerCase();
         if (SLIDE_KEYWORDS.some((kw) => lower.includes(kw))) {
           this._slideNode = child;
-          this._slideBaseZ = child.position.z;
+          this._slideBase = this._getPosOnAxis(child.position);
         }
       }
     });
+  }
+
+  /** 指定軸の現在値を取得する */
+  _getPosOnAxis(pos) {
+    const ax = this._slideAxis.replace('-', '');
+    return pos[ax] ?? pos.x;
   }
 
   _triggerSlideAnim() {
@@ -373,10 +381,12 @@ export class SceneManager {
       ? (t / 0.4) * TRAVEL
       : ((1 - t) / 0.6) * TRAVEL;
 
-    this._slideNode.position.z = this._slideBaseZ + offset;
+    const negative = this._slideAxis.startsWith('-');
+    const ax = this._slideAxis.replace('-', '');
+    this._slideNode.position[ax] = this._slideBase + (negative ? -offset : offset);
 
     if (t >= 1) {
-      this._slideNode.position.z = this._slideBaseZ;
+      this._slideNode.position[ax] = this._slideBase;
       this._slideAnim = null;
     }
   }
