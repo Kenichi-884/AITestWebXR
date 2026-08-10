@@ -48,6 +48,8 @@ export class HUD {
   show() {
     this._hudEl.style.display = 'block';
     this._crosshairEl.style.display = 'block';
+    const ammoWrap = document.getElementById('ammo-display');
+    if (ammoWrap) ammoWrap.style.display = 'block';
     this._reset();
   }
 
@@ -57,6 +59,9 @@ export class HUD {
   hide() {
     this._hudEl.style.display = 'none';
     this._crosshairEl.style.display = 'none';
+    const ammoWrap = document.getElementById('ammo-display');
+    if (ammoWrap) ammoWrap.style.display = 'none';
+    if (this._reloadEl) this._reloadEl.style.display = 'none';
   }
 
   /**
