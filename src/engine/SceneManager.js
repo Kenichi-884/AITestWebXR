@@ -18,6 +18,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import Config from '../common/Config.js';
+import EventBus from '../common/EventBus.js';
 
 export class SceneManager {
   /** @param {THREE.WebGLRenderer} renderer */
@@ -32,6 +33,14 @@ export class SceneManager {
     this._weaponConfig = null;
     /** @type {'xr'|'desktop'} */
     this._weaponMode = 'xr';
+
+    // スライドアニメーション
+    /** @type {THREE.Object3D|null} */
+    this._slideNode = null;
+    this._slideBaseZ = 0;
+    this._slideAnim = null; // { elapsed, duration }
+
+    EventBus.on('weapon:fired', () => this._triggerSlideAnim());
 
     this._controllerGrips = [];
     this._controllerRays = [];
@@ -221,6 +230,7 @@ export class SceneManager {
 
       this.weaponModel = model;
       this._weaponConfig = weaponConfig;
+      this._findSlideNode(model);
       this._attachWeapon(this._weaponMode);
       console.log('[SceneManager] Weapon loaded:', path);
     } catch (e) {
@@ -307,6 +317,54 @@ export class SceneManager {
     this.weaponModel = mesh;
     this._weaponConfig = weaponConfig;
     this._attachWeapon(this._weaponMode);
+  }
+
+  // ─── スライドアニメーション ───────────────────────────────
+
+  /**
+   * モデル内から "slide" を含むノードを探してキャッシュする
+   * @param {THREE.Object3D} model
+   */
+  _findSlideNode(model) {
+    model.traverse((child) => {
+      if (this._slideNode) return;
+      if (child.name.toLowerCase().includes('slide')) {
+        this._slideNode = child;
+        this._slideBaseZ = child.position.z;
+        console.log('[SceneManager] Slide node found:', child.name);
+      }
+    });
+    if (!this._slideNode) {
+      console.warn('[SceneManager] No slide node found in weapon model.');
+    }
+  }
+
+  _triggerSlideAnim() {
+    if (!this._slideNode) return;
+    this._slideAnim = { elapsed: 0, duration: 0.12 };
+  }
+
+  /**
+   * @param {number} delta 秒
+   */
+  update(delta) {
+    if (!this._slideAnim || !this._slideNode) return;
+    const anim = this._slideAnim;
+    anim.elapsed += delta;
+    const t = Math.min(anim.elapsed / anim.duration, 1);
+
+    // 前半40%: スライドが後退、後半60%: 前進して戻る
+    const TRAVEL = 50; // FBX単位 (scale 0.0002 適用後 ≈ 1cm)
+    const offset = t < 0.4
+      ? (t / 0.4) * TRAVEL
+      : ((1 - t) / 0.6) * TRAVEL;
+
+    this._slideNode.position.z = this._slideBaseZ + offset;
+
+    if (t >= 1) {
+      this._slideNode.position.z = this._slideBaseZ;
+      this._slideAnim = null;
+    }
   }
 
   // ─── リサイズ / リセット ──────────────────────────────────

@@ -270,6 +270,7 @@ class App {
       const playerPos = new THREE.Vector3();
       this._sceneManager.camera.getWorldPosition(playerPos);
 
+      this._sceneManager.update(delta);
       this._weapon.update(delta);
       this._enemySpawner.update(delta, playerPos);
       this._weapon.checkCollisions(this._enemySpawner.getEnemies());

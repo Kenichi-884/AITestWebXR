@@ -132,7 +132,14 @@ export class Weapon {
       // 最初のメッシュからジオメトリを取得
       let geo = null;
       model.traverse((child) => {
-        if (child.isMesh && !geo) geo = child.geometry;
+        if (child.isMesh && !geo) {
+          geo = child.geometry;
+          // FBX由来の元マテリアルを破棄（透明/黒になることがある）
+          if (child.material) {
+            const mats = Array.isArray(child.material) ? child.material : [child.material];
+            mats.forEach((m) => m.dispose());
+          }
+        }
       });
       if (!geo) throw new Error('No mesh found in bullet FBX');
 
@@ -140,6 +147,9 @@ export class Weapon {
         color: 0xc8a000,
         roughness: 0.3,
         metalness: 0.9,
+        transparent: false,
+        opacity: 1,
+        depthWrite: true,
       });
 
       const texLoader = new THREE.TextureLoader();
@@ -223,8 +233,8 @@ export class Weapon {
   _createBulletMesh() {
     if (this._bulletGeo && this._bulletMat) {
       const mesh = new THREE.Mesh(this._bulletGeo, this._bulletMat);
-      // FBX(Unity cm単位)なのでスケールを合わせる
-      mesh.scale.setScalar(0.001);
+      // FBX(Unity cm単位)なのでスケールを合わせる (0.003 ≈ 視認しやすいサイズ)
+      mesh.scale.setScalar(0.003);
       return mesh;
     }
 
