@@ -91,245 +91,480 @@ export class EffectManager {
   // 🔫 マズルフラッシュ
   // ============================================================
 
-  _spawnMuzzleFlash(position) {
+  _spawnDefeatBurst(position) {
 
-    // ----------------------------------------------------------
-    // ① 白い中心光
-    // ----------------------------------------------------------
-
+    // ============================================================
+    // ① 白い超強力フラッシュ
+    // ============================================================
+  
     const core = new THREE.Mesh(
-
-      new THREE.SphereGeometry(
-        0.07,
-        8,
-        8
-      ),
-
+      new THREE.IcosahedronGeometry(0.18, 1),
       new THREE.MeshBasicMaterial({
         color: 0xffffff,
-
         transparent: true,
-
-        blending:
-          THREE.AdditiveBlending,
-
+        blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
     );
-
+  
     core.position.copy(position);
-
     this.scene.add(core);
-
-
-    this._add(
-      core,
-      0.08,
-
-      (t, mesh) => {
-
-        mesh.material.opacity =
-          1 - t;
-
-        const scale =
-          1 + t * 4;
-
-        mesh.scale.setScalar(
-          scale
-        );
-      }
-    );
-
-
-    // ----------------------------------------------------------
-    // ② オレンジの爆発光
-    // ----------------------------------------------------------
-
-    const flash = new THREE.Mesh(
-
-      new THREE.SphereGeometry(
-        0.12,
-        8,
-        8
-      ),
-
+  
+    this._add(core, 0.15, (t, mesh) => {
+      mesh.scale.setScalar(1 + t * 8);
+      mesh.material.opacity = 1 - t;
+    });
+  
+  
+    // ============================================================
+    // ② メインのインク爆発
+    // ============================================================
+  
+    const COLORS = [
+      0xff2bd6, // ピンク
+      0x16e8ff, // シアン
+      0xd9ff00, // ライム
+      0xffe600, // 黄色
+    ];
+  
+    const mainColor =
+      COLORS[Math.floor(Math.random() * COLORS.length)];
+  
+  
+    const explosion = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.32, 1),
       new THREE.MeshBasicMaterial({
-
-        color: 0xff8800,
-
+        color: mainColor,
         transparent: true,
-
-        blending:
-          THREE.AdditiveBlending,
-
+        opacity: 1,
+      })
+    );
+  
+    explosion.position.copy(position);
+  
+    explosion.scale.set(
+      1.4,
+      1.0,
+      1.4
+    );
+  
+    this.scene.add(explosion);
+  
+    this._add(explosion, 0.3, (t, mesh) => {
+  
+      const punch =
+        Math.sin(t * Math.PI);
+  
+      const scale =
+        1 + punch * 5;
+  
+      mesh.scale.set(
+        scale * 1.4,
+        scale,
+        scale * 1.4
+      );
+  
+      mesh.rotation.y += 0.2;
+  
+      mesh.material.opacity =
+        1 - t;
+    });
+  
+  
+    // ============================================================
+    // ③ 反対色の外側爆発
+    // ============================================================
+  
+    const secondColor =
+      COLORS[Math.floor(Math.random() * COLORS.length)];
+  
+  
+    const outer = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(0.4, 1),
+      new THREE.MeshBasicMaterial({
+        color: secondColor,
+        transparent: true,
+        opacity: 0.8,
+        wireframe: false,
+      })
+    );
+  
+    outer.position.copy(position);
+  
+    this.scene.add(outer);
+  
+    this._add(outer, 0.35, (t, mesh) => {
+  
+      const scale =
+        1 + t * 6;
+  
+      mesh.scale.setScalar(scale);
+  
+      mesh.rotation.x += 0.05;
+      mesh.rotation.y -= 0.07;
+  
+      mesh.material.opacity =
+        (1 - t) * 0.8;
+    });
+  
+  
+    // ============================================================
+    // ④ コミック衝撃波
+    // ============================================================
+  
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(
+        0.2,
+        0.32,
+        10
+      ),
+      new THREE.MeshBasicMaterial({
+        color: 0xffffff,
+        transparent: true,
+        opacity: 1,
+        side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
         depthWrite: false,
       })
     );
-
-
-    flash.position.copy(position);
-
-    this.scene.add(flash);
-
-
-    this._add(
-      flash,
-      0.12,
-
-      (t, mesh) => {
-
-        mesh.material.opacity =
-          (1 - t) * 0.8;
-
-        const scale =
-          1 + t * 3;
-
-        mesh.scale.set(
-          scale,
-          scale,
-          scale * 1.5
-        );
-      }
-    );
-
-
-    // ----------------------------------------------------------
-    // ③ 銃口から飛び散る火花
-    // ----------------------------------------------------------
-
-    const SPARK_COUNT = 12;
-
-
-    for (
-      let i = 0;
-      i < SPARK_COUNT;
-      i++
-    ) {
-
-      const spark =
-        new THREE.Mesh(
-
-          new THREE.SphereGeometry(
-            0.015,
-            4,
-            4
-          ),
-
-          new THREE.MeshBasicMaterial({
-
-            color:
-              Math.random() > 0.5
-                ? 0xffdd55
-                : 0xff6600,
-
-            transparent: true,
-
-            blending:
-              THREE.AdditiveBlending,
-
-            depthWrite: false,
-          })
-        );
-
-
-      spark.position.copy(
-        position
+  
+    ring.position.copy(position);
+  
+    ring.rotation.x =
+      Math.PI / 2;
+  
+    this.scene.add(ring);
+  
+    this._add(ring, 0.3, (t, mesh) => {
+  
+      mesh.scale.setScalar(
+        1 + t * 12
       );
-
-
-      this.scene.add(
-        spark
-      );
-
-
-      // 火花の飛ぶ方向
-      const velocity =
+  
+      mesh.material.opacity =
+        (1 - t) * 0.9;
+    });
+  
+  
+    // ============================================================
+    // ⑤ アメコミ放射線
+    // ============================================================
+  
+    const LINE_COUNT = 24;
+  
+    for (let i = 0; i < LINE_COUNT; i++) {
+  
+      const direction =
         new THREE.Vector3(
-
-          (Math.random() - 0.5) * 5,
-
-          (Math.random() - 0.5) * 5,
-
-          (Math.random() - 0.5) * 5
-        );
-
-
-      const lifetime =
-        0.08 +
-        Math.random() * 0.15;
-
-
+          Math.random() - 0.5,
+          Math.random() - 0.3,
+          Math.random() - 0.5
+        ).normalize();
+  
+  
+      const length =
+        0.3 +
+        Math.random() * 0.8;
+  
+  
+      const line = new THREE.Mesh(
+  
+        new THREE.BoxGeometry(
+          0.025,
+          0.025,
+          length
+        ),
+  
+        new THREE.MeshBasicMaterial({
+          color:
+            Math.random() > 0.4
+              ? 0xffffff
+              : mainColor,
+  
+          transparent: true,
+  
+          blending:
+            THREE.AdditiveBlending,
+  
+          depthWrite: false,
+        })
+      );
+  
+  
+      line.position.copy(position);
+  
+  
+      line.quaternion.setFromUnitVectors(
+        new THREE.Vector3(0, 0, 1),
+        direction
+      );
+  
+  
+      this.scene.add(line);
+  
+  
+      const speed =
+        4 +
+        Math.random() * 8;
+  
+  
       this._add(
-
-        spark,
-
-        lifetime,
-
+        line,
+        0.25 + Math.random() * 0.2,
+  
         (t, mesh, delta) => {
-
-          mesh.position
-            .addScaledVector(
-              velocity,
-              delta
-            );
-
-
+  
+          mesh.position.addScaledVector(
+            direction,
+            speed * delta
+          );
+  
+  
+          mesh.scale.z =
+            1 + t * 2;
+  
+  
           mesh.material.opacity =
             1 - t;
-
-
-          mesh.scale.setScalar(
-            1 - t * 0.5
+        }
+      );
+    }
+  
+  
+    // ============================================================
+    // ⑥ インク飛沫
+    // ============================================================
+  
+    const SPLASH_COUNT = 30;
+  
+  
+    for (let i = 0; i < SPLASH_COUNT; i++) {
+  
+      const size =
+        0.025 +
+        Math.random() * 0.09;
+  
+  
+      const splash = new THREE.Mesh(
+  
+        new THREE.SphereGeometry(
+          size,
+          5,
+          5
+        ),
+  
+        new THREE.MeshBasicMaterial({
+          color:
+            COLORS[
+              Math.floor(
+                Math.random() * COLORS.length
+              )
+            ],
+  
+          transparent: true,
+        })
+      );
+  
+  
+      splash.position.copy(position);
+  
+  
+      // 丸ではなく潰してインクっぽく
+      splash.scale.set(
+        0.5 + Math.random() * 1.5,
+        0.5 + Math.random() * 1.5,
+        0.3 + Math.random()
+      );
+  
+  
+      this.scene.add(splash);
+  
+  
+      const velocity =
+        new THREE.Vector3(
+  
+          (Math.random() - 0.5) * 10,
+  
+          Math.random() * 8 + 1,
+  
+          (Math.random() - 0.5) * 10
+        );
+  
+  
+      const lifetime =
+        0.35 +
+        Math.random() * 0.45;
+  
+  
+      this._add(
+        splash,
+        lifetime,
+  
+        (t, mesh, delta) => {
+  
+          velocity.y -=
+            10 * delta;
+  
+  
+          mesh.position.addScaledVector(
+            velocity,
+            delta
+          );
+  
+  
+          mesh.rotation.x +=
+            delta * 6;
+  
+          mesh.rotation.y +=
+            delta * 8;
+  
+  
+          mesh.material.opacity =
+            1 - t;
+  
+  
+          mesh.scale.multiplyScalar(
+            0.995
           );
         }
       );
     }
-
-
-    // ----------------------------------------------------------
-    // ④ 周囲を一瞬照らす
-    // ----------------------------------------------------------
-
-    const lightObject =
+  
+  
+    // ============================================================
+    // ⑦ 大きな漫画破片
+    // ============================================================
+  
+    const CHUNK_COUNT = 12;
+  
+  
+    for (let i = 0; i < CHUNK_COUNT; i++) {
+  
+      const chunk =
+        new THREE.Mesh(
+  
+          new THREE.TetrahedronGeometry(
+            0.07 +
+            Math.random() * 0.08
+          ),
+  
+          new THREE.MeshBasicMaterial({
+  
+            color:
+              COLORS[
+                Math.floor(
+                  Math.random() *
+                  COLORS.length
+                )
+              ],
+  
+            transparent: true,
+          })
+        );
+  
+  
+      chunk.position.copy(position);
+  
+  
+      this.scene.add(chunk);
+  
+  
+      const velocity =
+        new THREE.Vector3(
+  
+          (Math.random() - 0.5) * 9,
+  
+          Math.random() * 7 + 2,
+  
+          (Math.random() - 0.5) * 9
+        );
+  
+  
+      const spin =
+        new THREE.Vector3(
+  
+          Math.random() * 15,
+  
+          Math.random() * 15,
+  
+          Math.random() * 15
+        );
+  
+  
+      const lifetime =
+        0.5 +
+        Math.random() * 0.4;
+  
+  
+      this._add(
+        chunk,
+        lifetime,
+  
+        (t, mesh, delta) => {
+  
+          velocity.y -=
+            9 * delta;
+  
+  
+          mesh.position.addScaledVector(
+            velocity,
+            delta
+          );
+  
+  
+          mesh.rotation.x +=
+            spin.x * delta;
+  
+          mesh.rotation.y +=
+            spin.y * delta;
+  
+          mesh.rotation.z +=
+            spin.z * delta;
+  
+  
+          mesh.material.opacity =
+            1 - t;
+        }
+      );
+    }
+  
+  
+    // ============================================================
+    // ⑧ 爆発時に周囲を強く照らす
+    // ============================================================
+  
+    const lightHolder =
       new THREE.Object3D();
-
-
-    lightObject.position.copy(
-      position
-    );
-
-
+  
+  
+    lightHolder.position.copy(position);
+  
+  
     const light =
       new THREE.PointLight(
-        0xffaa44,
-        15,
-        4
+        mainColor,
+        30,
+        6
       );
-
-
-    lightObject.add(
-      light
-    );
-
-
-    this.scene.add(
-      lightObject
-    );
-
-
+  
+  
+    lightHolder.add(light);
+  
+    this.scene.add(lightHolder);
+  
+  
     this._add(
-
-      lightObject,
-
-      0.1,
-
+      lightHolder,
+      0.2,
+  
       (t, mesh) => {
-
+  
         const pointLight =
           mesh.children[0];
-
+  
+  
         pointLight.intensity =
-          15 * (1 - t);
+          30 * (1 - t);
       }
     );
   }
