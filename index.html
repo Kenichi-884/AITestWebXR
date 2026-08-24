@@ -226,5 +226,8 @@
   </div>
 
   <script type="module" src="/src/engine/App.js"></script>
+  <!-- スコア(コンボ・ボーナス・ランク判定)。EventBusを購読して自己完結するため
+       App.js からの呼び出しは不要。読み込み順は App.js より後にすること。 -->
+  <script type="module" src="/src/score/ScoreManager.js"></script>
 </body>
 </html>
