@@ -38,10 +38,10 @@
     "_comment": "Weapon model settings. Adjust xr / desktop separately.",
     "_note": "Converting FBX to GLB (Blender: File > Export > glTF 2.0) improves load speed.",
     "modelPath": "/assets/pistol/models/",
-    "modelFile": "pistol-92.fbx",
+    "modelFile": "pistol-92.glb",
     "texturesPath": "/assets/pistol/textures/",
     "hand": "right",
-    "slideNodeName": "Cube001",
+    "slideNodeName": "Cube.001",
     "_slideAxisNote": "スライドの移動軸: x / y / z (マイナスにしたい場合は -x / -y / -z)",
     "slideAxis": "x",
 
