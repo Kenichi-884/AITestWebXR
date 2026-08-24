@@ -35,7 +35,7 @@ export class MenuScreen {
     document.getElementById('btn-restart')?.addEventListener('click', callbacks.onRestart);
     document.getElementById('btn-to-menu')?.addEventListener('click', callbacks.onToMenu);
 
-    this._highScore = 0;
+    this._highScore = Number(localStorage.getItem('mrShooterHighScore')) || 0;
   }
 
   /**
@@ -80,6 +80,11 @@ export class MenuScreen {
     this._menuEl.style.display = 'none';
     this._resultEl.style.display = 'flex';
 
+    // フェードイン演出を毎回再生させるため一旦クラスを外してから付け直す
+    this._resultEl.classList.remove('show-anim');
+    void this._resultEl.offsetWidth; // 強制リフロー
+    this._resultEl.classList.add('show-anim');
+
     if (this._resultScoreEl) {
       this._resultScoreEl.textContent = finalScore.toLocaleString();
     }
@@ -87,9 +92,10 @@ export class MenuScreen {
       this._resultWaveValueEl.textContent = wave;
     }
 
-    // ハイスコア更新チェック
+    // ハイスコア更新チェック(localStorageに永続化してセッションをまたいでも記録を保持する)
     if (finalScore > this._highScore) {
       this._highScore = finalScore;
+      localStorage.setItem('mrShooterHighScore', String(finalScore));
       this._showHighScoreBadge(finalScore);
     }
 
