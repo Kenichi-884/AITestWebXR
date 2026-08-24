@@ -11,13 +11,13 @@
  *   - 音声ファイルに差し替えたい場合は preload() / setBGMFile() を使う
  *
  * サウンドID一覧:
- *   'shoot'      - 射撃音                 (Weapon.js から発火)
- *   'hit'        - 弾が敵にヒット          (Enemy.js から発火)
- *   'defeat'     - 敵撃破                 (Enemy.js から発火)
- *   'player-hit' - プレイヤーがダメージ    (Enemy.js から発火)
- *   'reload'     - リロード               (Weapon.js から発火)
- *   'game-start' - ゲーム開始ジングル      (game:start を自前で購読)
- *   'game-over'  - ゲームオーバー          (game:over を自前で購読)
+ *   'shoot'      - 射撃(ロケットランチャー)  (Weapon.js から発火)
+ *   'hit'        - 着弾(小さめの炸裂)        (Enemy.js から発火)
+ *   'defeat'     - 撃破(爆発)               (Enemy.js から発火)
+ *   'player-hit' - プレイヤーがダメージ      (Enemy.js から発火)
+ *   'reload'     - リロード                 (Weapon.js から発火)
+ *   'game-start' - 冒険の始まりファンファーレ (game:start を自前で購読)
+ *   'game-over'  - RPGエンディング風         (game:over を自前で購読)
  *   'wave-up'    - ウェーブ進行ファンファーレ (game:wave-update を自前で購読)
  *   'spawn'      - 敵スポーン              (enemy:spawned を自前で購読)
  *   'empty'      - 弾切れ時の空撃ち        (未使用 / 手動で play('empty') 可)
@@ -77,6 +77,7 @@ export class SoundManager {
 
     this._masterGain = null;
     this._sfxGain = null;
+    this._sfxComp = null;
     this._bgmGain = null;
     this._initialized = false;
     this._muted = false;
@@ -150,10 +151,23 @@ export class SoundManager {
       this._masterGain.gain.value = Config.SOUND.MASTER_VOLUME;
       this._masterGain.connect(this._ctx.destination);
 
-      // 効果音とBGMを別系統にして、片方だけ音量調整できるようにする
+      // 効果音とBGMを別系統にして、片方だけ音量調整できるようにする。
+      // 効果音側はコンプレッサーを通す: 爆発やロケット発射音はレイヤーが多く
+      // 波形が振り切れて歪みやすいため、ピークだけを抑えて迫力を保つ。
+      // BGMには掛けない(BGMが効果音に引きずられて音量変動するのを避けるため)。
+      this._sfxComp = this._ctx.createDynamicsCompressor();
+      // NOTE: 強く掛けると爆発も小さい音も同じ音量まで潰れて強弱が失われる。
+      //       ここでは素の音量を1.0前後に収めた上で、振り切れだけを抑える穏やかな設定。
+      this._sfxComp.threshold.value = -6;
+      this._sfxComp.knee.value = 10;
+      this._sfxComp.ratio.value = 3;
+      this._sfxComp.attack.value = 0.003;
+      this._sfxComp.release.value = 0.15;
+      this._sfxComp.connect(this._masterGain);
+
       this._sfxGain = this._ctx.createGain();
       this._sfxGain.gain.value = 1.0;
-      this._sfxGain.connect(this._masterGain);
+      this._sfxGain.connect(this._sfxComp);
 
       this._bgmGain = this._ctx.createGain();
       this._bgmGain.gain.value = 0.0;   // 開始時にフェードインさせる
@@ -210,62 +224,66 @@ export class SoundManager {
 
   _createSoundDefs() {
     const V = Config.SOUND;
+    const S = SOUND_CONFIG;
 
     return {
-      // 射撃: 高音から急降下する「ピュン」+ 発射のアタック音
+      // 射撃: ロケットランチャー。発射の「ドンッ」+ 弾が飛び去るシューという抜け
+      // NOTE: 連射クールダウンが0.3秒(Config.WEAPON.COOLDOWN)のため、
+      //       音が濁らないよう全体を0.35秒以内に収めている。
       'shoot': [
-        {
-          type: 'square', freq: 880, freqEnd: 220,
-          duration: 0.12, volume: V.SHOOT_VOLUME * 0.55,
-          attack: 0.003, decay: 0.10,
-          filter: { type: 'lowpass', freq: 4000, freqEnd: 900, Q: 4 },
-        },
-        {
-          type: 'noise', freq: 1200,
-          duration: 0.05, volume: V.SHOOT_VOLUME * 0.35,
-          attack: 0.001, decay: 0.05,
-          filter: { type: 'highpass', freq: 1500 },
-        },
+        // 発射の衝撃(サブベース)
+        { type: 'sine', freq: 170, freqEnd: 42,
+          duration: 0.30, volume: V.SHOOT_VOLUME * 0.81,
+          attack: 0.002, decay: 0.28 },
+        // 発射音の芯(歪んだ低音)
+        { type: 'sawtooth', freq: 340, freqEnd: 55,
+          duration: 0.26, volume: V.SHOOT_VOLUME * 0.43,
+          attack: 0.002, decay: 0.24,
+          filter: { type: 'lowpass', freq: 2600, freqEnd: 240, Q: 5 } },
+        // 発射炎の破裂
+        { type: 'noise', freq: 1600,
+          duration: 0.13, volume: V.SHOOT_VOLUME * 0.47,
+          attack: 0.001, decay: 0.13,
+          filter: { type: 'lowpass', freq: 5200, freqEnd: 700, Q: 1 } },
+        // ロケットが遠ざかっていくシュー音(帯域を下げて距離感を出す)
+        { type: 'noise', freq: 900,
+          duration: 0.34, volume: V.SHOOT_VOLUME * 0.27,
+          attack: 0.03, decay: 0.34, delay: 0.04,
+          filter: { type: 'bandpass', freq: 2800, freqEnd: 700, Q: 1.2 } },
       ],
 
-      // ヒット: 短くコツンと当たる感触
+      // ヒット: 着弾したが撃破に至らなかった場合。小さめの炸裂で手応えを出す
       'hit': [
-        {
-          type: 'sine', freq: 660, freqEnd: 330,
-          duration: 0.10, volume: V.HIT_VOLUME * 0.6,
-          attack: 0.002, decay: 0.09,
-        },
-        {
-          type: 'noise', freq: 900,
-          duration: 0.06, volume: V.HIT_VOLUME * 0.3,
-          attack: 0.001, decay: 0.06,
-          filter: { type: 'bandpass', freq: 2200, Q: 1.5 },
-        },
+        { type: 'sine', freq: 220, freqEnd: 65,
+          duration: 0.20, volume: V.HIT_VOLUME * 0.43,
+          attack: 0.002, decay: 0.19 },
+        { type: 'noise', freq: 900,
+          duration: 0.18, volume: V.HIT_VOLUME * 0.35,
+          attack: 0.001, decay: 0.18,
+          filter: { type: 'lowpass', freq: 3000, freqEnd: 320, Q: 1 } },
       ],
 
-      // 撃破: 上昇する2音 + 弾ける破裂音で爽快感を出す
+      // 撃破: 爆発。バリッという破裂 → 爆風 → 地響き → 破片が散る余韻の4段構成
       'defeat': [
-        {
-          type: 'noise', freq: 700,
-          duration: 0.18, volume: V.DEFEAT_VOLUME * 0.30,
-          attack: 0.001, decay: 0.18,
-          filter: { type: 'lowpass', freq: 3500, freqEnd: 400, Q: 1 },
-        },
-        {
-          type: 'triangle', freq: 440, freqEnd: 880,
-          duration: 0.15, volume: V.DEFEAT_VOLUME * 0.45,
-          attack: 0.008, decay: 0.15,
-        },
-        {
-          type: 'triangle', freq: 660, freqEnd: 1320,
-          duration: 0.20, volume: V.DEFEAT_VOLUME * 0.40,
-          attack: 0.008, decay: 0.20, delay: 0.08,
-        },
-        {
-          type: 'sine', freq: 1320, freqEnd: 1760,
-          duration: 0.22, volume: V.DEFEAT_VOLUME * 0.18,
-          attack: 0.010, decay: 0.22, delay: 0.08,
-        },
+        // 破裂の立ち上がり(高域のバリッという成分)
+        { type: 'noise', freq: 2600,
+          duration: 0.10, volume: V.DEFEAT_VOLUME * 0.30,
+          attack: 0.001, decay: 0.10,
+          filter: { type: 'highpass', freq: 2400 } },
+        // 爆風の本体(高域から低域へ一気に落とす)
+        { type: 'noise', freq: 1100,
+          duration: 0.55, volume: V.DEFEAT_VOLUME * 0.53,
+          attack: 0.002, decay: 0.55,
+          filter: { type: 'lowpass', freq: 5500, freqEnd: 170, Q: 1.2 } },
+        // 地響き(サブベース)
+        { type: 'sine', freq: 115, freqEnd: 28,
+          duration: 0.60, volume: V.DEFEAT_VOLUME * 0.57,
+          attack: 0.004, decay: 0.60 },
+        // 破片が散る余韻
+        { type: 'noise', freq: 500,
+          duration: 0.75, volume: V.DEFEAT_VOLUME * 0.19,
+          attack: 0.06, decay: 0.75, delay: 0.10,
+          filter: { type: 'lowpass', freq: 1000, freqEnd: 220, Q: 0.7 } },
       ],
 
       // 被弾: 濁った低音で「やられた」感。少し長めに残す
@@ -293,59 +311,114 @@ export class SoundManager {
       'reload': [
         {
           type: 'noise', freq: 600,
-          duration: 0.07, volume: SOUND_CONFIG.RELOAD_VOLUME * 0.6,
+          duration: 0.07, volume: S.RELOAD_VOLUME * 0.6,
           attack: 0.001, decay: 0.07,
           filter: { type: 'bandpass', freq: 1800, Q: 2 },
         },
         {
           type: 'square', freq: 320, freqEnd: 180,
-          duration: 0.08, volume: SOUND_CONFIG.RELOAD_VOLUME * 0.35,
+          duration: 0.08, volume: S.RELOAD_VOLUME * 0.35,
           attack: 0.002, decay: 0.08,
           filter: { type: 'lowpass', freq: 1500 },
         },
         {
           type: 'noise', freq: 500,
-          duration: 0.10, volume: SOUND_CONFIG.RELOAD_VOLUME * 0.7,
+          duration: 0.10, volume: S.RELOAD_VOLUME * 0.7,
           attack: 0.001, decay: 0.10, delay: 0.28,
           filter: { type: 'bandpass', freq: 1100, Q: 1.5 },
         },
         {
           type: 'square', freq: 220, freqEnd: 120,
-          duration: 0.12, volume: SOUND_CONFIG.RELOAD_VOLUME * 0.40,
+          duration: 0.12, volume: S.RELOAD_VOLUME * 0.40,
           attack: 0.002, decay: 0.12, delay: 0.28,
           filter: { type: 'lowpass', freq: 1200 },
         },
       ],
 
-      // ゲーム開始: 上昇する3音のジングル
+      // 開始: 冒険の始まりを告げるファンファーレ(約2.3秒)。
+      // 期待感を煽る立ち上がり → 上昇アルペジオ → 明るく開ける主和音。
+      // NOTE: ブラウザの制約でAudioContextはユーザー操作後にしか音を出せないため、
+      //       メニュー表示の瞬間ではなくスタートボタンを押した時点で鳴る。
       'game-start': [
-        { type: 'triangle', freq: 440, duration: 0.14, volume: SOUND_CONFIG.GAME_START_VOLUME * 0.5, attack: 0.01, decay: 0.14, delay: 0.00 },
-        { type: 'triangle', freq: 587, duration: 0.14, volume: SOUND_CONFIG.GAME_START_VOLUME * 0.5, attack: 0.01, decay: 0.14, delay: 0.11 },
-        { type: 'triangle', freq: 880, duration: 0.40, volume: SOUND_CONFIG.GAME_START_VOLUME * 0.6, attack: 0.01, decay: 0.40, delay: 0.22 },
-        { type: 'sine',     freq: 1760, duration: 0.45, volume: SOUND_CONFIG.GAME_START_VOLUME * 0.18, attack: 0.02, decay: 0.45, delay: 0.22 },
+        // サーッと持ち上がる立ち上がり
+        { type: 'noise', freq: 500, duration: 0.50, volume: S.GAME_START_VOLUME * 0.20,
+          attack: 0.24, decay: 0.50,
+          filter: { type: 'bandpass', freq: 400, freqEnd: 5000, Q: 0.7 } },
+
+        // 上昇アルペジオ C - E - G (ブラス風)
+        { type: 'sawtooth', freq: 523, duration: 0.16, volume: S.GAME_START_VOLUME * 0.30,
+          attack: 0.008, decay: 0.16, delay: 0.42, filter: { type: 'lowpass', freq: 2800, Q: 1 } },
+        { type: 'sawtooth', freq: 659, duration: 0.16, volume: S.GAME_START_VOLUME * 0.30,
+          attack: 0.008, decay: 0.16, delay: 0.56, filter: { type: 'lowpass', freq: 3000, Q: 1 } },
+        { type: 'sawtooth', freq: 784, duration: 0.16, volume: S.GAME_START_VOLUME * 0.30,
+          attack: 0.008, decay: 0.16, delay: 0.70, filter: { type: 'lowpass', freq: 3200, Q: 1 } },
+
+        // 到達点の主和音(ここで一気に視界が開ける)
+        { type: 'sawtooth', freq: 1047, duration: 1.30, volume: S.GAME_START_VOLUME * 0.34,
+          attack: 0.012, decay: 1.30, delay: 0.84,
+          filter: { type: 'lowpass', freq: 3600, freqEnd: 1400, Q: 1 } },
+        { type: 'triangle', freq: 659, duration: 1.30, volume: S.GAME_START_VOLUME * 0.20, attack: 0.02, decay: 1.30, delay: 0.84 },
+        { type: 'triangle', freq: 784, duration: 1.30, volume: S.GAME_START_VOLUME * 0.20, attack: 0.02, decay: 1.30, delay: 0.84 },
+        { type: 'sine',     freq: 2093, duration: 1.20, volume: S.GAME_START_VOLUME * 0.10, attack: 0.03, decay: 1.20, delay: 0.86 },
+
+        // 足元を支えるベースと、開幕のインパクト
+        { type: 'sine', freq: 131, duration: 1.50, volume: S.GAME_START_VOLUME * 0.45, attack: 0.02, decay: 1.50, delay: 0.84 },
+        { type: 'noise', freq: 900, duration: 0.35, volume: S.GAME_START_VOLUME * 0.30,
+          attack: 0.001, decay: 0.35, delay: 0.84,
+          filter: { type: 'lowpass', freq: 4000, freqEnd: 300, Q: 1 } },
       ],
 
-      // ゲームオーバー: 下降する和音でしっとり終わる
+      // 終了: RPGのエンディング風(約5秒)。C - F - G - C のゆったりした進行に
+      // ベル系のメロディを重ね、最後は主和音に解決して余韻を残す。
+      // NOTE: このゲームに「クリア」状態は無く、game:over(HP0 / セッション終了)で鳴る。
+      //       リザルト画面(1秒後に表示)に被せて流れる想定。
       'game-over': [
-        { type: 'triangle', freq: 440, freqEnd: 415, duration: 0.35, volume: SOUND_CONFIG.GAME_OVER_VOLUME * 0.45, attack: 0.02, decay: 0.35, delay: 0.00 },
-        { type: 'triangle', freq: 349, freqEnd: 330, duration: 0.35, volume: SOUND_CONFIG.GAME_OVER_VOLUME * 0.45, attack: 0.02, decay: 0.35, delay: 0.28 },
-        { type: 'triangle', freq: 262, freqEnd: 247, duration: 1.10, volume: SOUND_CONFIG.GAME_OVER_VOLUME * 0.50, attack: 0.03, decay: 1.10, delay: 0.56 },
-        { type: 'sine',     freq: 131, freqEnd: 123, duration: 1.40, volume: SOUND_CONFIG.GAME_OVER_VOLUME * 0.40, attack: 0.05, decay: 1.40, delay: 0.56 },
+        // --- ベース: C - F - G - C ---
+        { type: 'sine', freq: 131, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.45, attack: 0.03, decay: 1.00, delay: 0.00 },
+        { type: 'sine', freq: 175, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.45, attack: 0.03, decay: 1.00, delay: 1.05 },
+        { type: 'sine', freq: 196, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.45, attack: 0.03, decay: 1.00, delay: 2.10 },
+        { type: 'sine', freq: 131, duration: 2.00, volume: S.GAME_OVER_VOLUME * 0.50, attack: 0.03, decay: 2.00, delay: 3.15 },
+
+        // --- 和音パッド(上のベースに乗る三和音) ---
+        { type: 'triangle', freq: 262, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 0.00, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 330, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 0.00, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 392, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 0.00, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 262, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 1.05, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 349, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 1.05, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 440, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 1.05, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 247, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 2.10, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 294, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 2.10, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 392, duration: 1.00, volume: S.GAME_OVER_VOLUME * 0.14, attack: 0.06, decay: 1.00, delay: 2.10, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 262, duration: 2.00, volume: S.GAME_OVER_VOLUME * 0.16, attack: 0.06, decay: 2.00, delay: 3.15, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 330, duration: 2.00, volume: S.GAME_OVER_VOLUME * 0.16, attack: 0.06, decay: 2.00, delay: 3.15, filter: { type: 'lowpass', freq: 1800 } },
+        { type: 'triangle', freq: 392, duration: 2.00, volume: S.GAME_OVER_VOLUME * 0.16, attack: 0.06, decay: 2.00, delay: 3.15, filter: { type: 'lowpass', freq: 1800 } },
+
+        // --- メロディ(ベル) E-G-A-G-F-E-D-C と下りて主音に着地 ---
+        { type: 'triangle', freq: 659, duration: 0.50, volume: S.GAME_OVER_VOLUME * 0.30, attack: 0.010, decay: 0.50, delay: 0.10, filter: { type: 'lowpass', freq: 3200 } },
+        { type: 'triangle', freq: 784, duration: 0.50, volume: S.GAME_OVER_VOLUME * 0.30, attack: 0.010, decay: 0.50, delay: 0.55, filter: { type: 'lowpass', freq: 3200 } },
+        { type: 'triangle', freq: 880, duration: 0.55, volume: S.GAME_OVER_VOLUME * 0.32, attack: 0.010, decay: 0.55, delay: 1.15, filter: { type: 'lowpass', freq: 3400 } },
+        { type: 'triangle', freq: 784, duration: 0.45, volume: S.GAME_OVER_VOLUME * 0.30, attack: 0.010, decay: 0.45, delay: 1.65, filter: { type: 'lowpass', freq: 3200 } },
+        { type: 'triangle', freq: 698, duration: 0.45, volume: S.GAME_OVER_VOLUME * 0.30, attack: 0.010, decay: 0.45, delay: 2.20, filter: { type: 'lowpass', freq: 3200 } },
+        { type: 'triangle', freq: 659, duration: 0.45, volume: S.GAME_OVER_VOLUME * 0.30, attack: 0.010, decay: 0.45, delay: 2.65, filter: { type: 'lowpass', freq: 3200 } },
+        { type: 'triangle', freq: 587, duration: 0.30, volume: S.GAME_OVER_VOLUME * 0.28, attack: 0.010, decay: 0.30, delay: 3.00, filter: { type: 'lowpass', freq: 3000 } },
+        // 主音に解決して長く伸ばす + 上のオクターブでキラッと余韻を残す
+        { type: 'triangle', freq: 523, duration: 1.70, volume: S.GAME_OVER_VOLUME * 0.34, attack: 0.012, decay: 1.70, delay: 3.25, filter: { type: 'lowpass', freq: 3000 } },
+        { type: 'sine',     freq: 1047, duration: 1.80, volume: S.GAME_OVER_VOLUME * 0.12, attack: 0.030, decay: 1.80, delay: 3.25 },
       ],
 
       // ウェーブ進行: 短いファンファーレ
       'wave-up': [
-        { type: 'square', freq: 523, duration: 0.10, volume: SOUND_CONFIG.WAVE_UP_VOLUME * 0.35, attack: 0.005, decay: 0.10, delay: 0.00, filter: { type: 'lowpass', freq: 3000 } },
-        { type: 'square', freq: 659, duration: 0.10, volume: SOUND_CONFIG.WAVE_UP_VOLUME * 0.35, attack: 0.005, decay: 0.10, delay: 0.09, filter: { type: 'lowpass', freq: 3000 } },
-        { type: 'square', freq: 784, duration: 0.10, volume: SOUND_CONFIG.WAVE_UP_VOLUME * 0.35, attack: 0.005, decay: 0.10, delay: 0.18, filter: { type: 'lowpass', freq: 3000 } },
-        { type: 'square', freq: 1047, duration: 0.35, volume: SOUND_CONFIG.WAVE_UP_VOLUME * 0.45, attack: 0.005, decay: 0.35, delay: 0.27, filter: { type: 'lowpass', freq: 3500 } },
+        { type: 'square', freq: 523, duration: 0.10, volume: S.WAVE_UP_VOLUME * 0.35, attack: 0.005, decay: 0.10, delay: 0.00, filter: { type: 'lowpass', freq: 3000 } },
+        { type: 'square', freq: 659, duration: 0.10, volume: S.WAVE_UP_VOLUME * 0.35, attack: 0.005, decay: 0.10, delay: 0.09, filter: { type: 'lowpass', freq: 3000 } },
+        { type: 'square', freq: 784, duration: 0.10, volume: S.WAVE_UP_VOLUME * 0.35, attack: 0.005, decay: 0.10, delay: 0.18, filter: { type: 'lowpass', freq: 3000 } },
+        { type: 'square', freq: 1047, duration: 0.35, volume: S.WAVE_UP_VOLUME * 0.45, attack: 0.005, decay: 0.35, delay: 0.27, filter: { type: 'lowpass', freq: 3500 } },
       ],
 
       // スポーン: 存在を知らせる控えめな低いブリップ
       'spawn': [
         {
           type: 'sine', freq: 180, freqEnd: 320,
-          duration: 0.16, volume: SOUND_CONFIG.SPAWN_VOLUME * 0.8,
+          duration: 0.16, volume: S.SPAWN_VOLUME * 0.8,
           attack: 0.02, decay: 0.16,
           filter: { type: 'lowpass', freq: 900 },
         },
@@ -355,7 +428,7 @@ export class SoundManager {
       'empty': [
         {
           type: 'noise', freq: 400,
-          duration: 0.05, volume: SOUND_CONFIG.EMPTY_VOLUME * 0.8,
+          duration: 0.05, volume: S.EMPTY_VOLUME * 0.8,
           attack: 0.001, decay: 0.05,
           filter: { type: 'bandpass', freq: 2500, Q: 3 },
         },
