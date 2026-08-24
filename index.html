@@ -57,6 +57,23 @@
       margin-top: 1rem;
       font-size: 0.9rem;
     }
+    #how-to-play {
+      margin-top: 2rem;
+      padding: 1rem 1.5rem;
+      background: rgba(255, 255, 255, 0.06);
+      border-radius: 10px;
+      font-size: 0.85rem;
+      color: #ccc;
+      line-height: 1.9;
+      text-align: left;
+    }
+    #how-to-play .how-to-title {
+      font-size: 0.75rem;
+      color: #f39c12;
+      letter-spacing: 0.15em;
+      margin-bottom: 0.4rem;
+      font-weight: bold;
+    }
 
     /* ===== HUD (担当: 営業/総務メンバー) ===== */
     #hud {
@@ -75,11 +92,52 @@
       text-shadow: 0 0 10px rgba(0,0,0,0.8);
       font-weight: bold;
     }
+    #score-value.score-pop {
+      display: inline-block;
+      animation: scorePop 0.3s ease-out;
+    }
+    @keyframes scorePop {
+      0%   { transform: scale(1.5); color: #f1c40f; }
+      100% { transform: scale(1); color: #fff; }
+    }
+    .score-popup {
+      position: absolute;
+      top: -6px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: #f1c40f;
+      font-size: 1.2rem;
+      font-weight: bold;
+      text-shadow: 0 0 8px rgba(0,0,0,0.9);
+      animation: scorePopupRise 0.8s ease-out forwards;
+      pointer-events: none;
+    }
+    @keyframes scorePopupRise {
+      0%   { opacity: 1; transform: translate(-50%, 0); }
+      100% { opacity: 0; transform: translate(-50%, -30px); }
+    }
+    #combo-display {
+      position: absolute;
+      top: 40px;
+      left: calc(50% + 110px);
+      transform: scale(0.8);
+      transform-origin: left center;
+      color: #ff7043;
+      font-size: 1.1rem;
+      font-weight: bold;
+      letter-spacing: 0.05em;
+      text-shadow: 0 0 10px rgba(255,112,67,0.8);
+      opacity: 0;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    #combo-display.combo-active {
+      opacity: 1;
+      transform: scale(1);
+    }
     #health-bar-wrap {
       position: absolute;
       bottom: 60px;
-      left: 50%;
-      transform: translateX(-50%);
+      left: calc(50% + 16px);
       display: flex;
       align-items: center;
       gap: 10px;
@@ -110,8 +168,9 @@
     }
     #ammo-display {
       position: fixed;
-      bottom: 110px;
-      left: 40px;
+      bottom: 60px;
+      right: calc(50% + 16px);
+      text-align: right;
       color: #fff;
       font-size: 1.4rem;
       font-weight: bold;
@@ -130,8 +189,9 @@
     #reload-indicator {
       display: none;
       position: fixed;
-      bottom: 82px;
-      left: 40px;
+      bottom: 96px;
+      right: calc(50% + 16px);
+      text-align: right;
       color: #f39c12;
       font-size: 1rem;
       font-weight: bold;
@@ -143,6 +203,44 @@
     @keyframes reloadPulse {
       from { opacity: 0.4; }
       to   { opacity: 1.0; }
+    }
+
+    /* ===== ウェーブバナー ===== */
+    .wave-banner-line {
+      width: 220px;
+      height: 2px;
+      margin: 8px auto;
+      background: linear-gradient(90deg, transparent, #f1c40f, transparent);
+    }
+    .wave-banner-text {
+      font-size: 3rem;
+      font-weight: bold;
+      color: #f1c40f;
+      letter-spacing: 0.15em;
+      text-shadow: 0 0 20px rgba(241,196,15,0.8);
+    }
+    .wave-banner-sub {
+      font-size: 0.9rem;
+      color: #ddd;
+      letter-spacing: 0.4em;
+      margin-top: 4px;
+    }
+
+    /* ===== 被弾フラッシュ ===== */
+    #damage-flash {
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse at center, rgba(255,0,0,0) 40%, rgba(200,0,0,0.55) 100%);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 15;
+    }
+    #damage-flash.damage-flash-active {
+      animation: damageFlash 0.4s ease-out;
+    }
+    @keyframes damageFlash {
+      0%   { opacity: 1; }
+      100% { opacity: 0; }
     }
 
     /* ===== リザルト画面 (担当: 営業/総務メンバー) ===== */
@@ -157,9 +255,20 @@
       color: #fff;
       pointer-events: all;
     }
-    #result-screen h2 { font-size: 2rem; margin-bottom: 0.5rem; }
+    #result-screen h2 {
+      font-size: 2.2rem;
+      margin-bottom: 0.5rem;
+      color: #e74c3c;
+      letter-spacing: 0.1em;
+      text-shadow: 0 0 20px rgba(231, 76, 60, 0.7);
+    }
     #result-score { font-size: 3rem; color: #f1c40f; margin: 1rem 0; font-weight: bold; }
     #result-wave { color: #aaa; margin-bottom: 2rem; }
+    #result-screen.show-anim { animation: resultFadeIn 0.5s ease-out; }
+    @keyframes resultFadeIn {
+      0%   { opacity: 0; transform: scale(0.9); }
+      100% { opacity: 1; transform: scale(1); }
+    }
 
     /* ===== 照準 ===== */
     #crosshair {
@@ -167,17 +276,45 @@
       top: 50%;
       left: 50%;
       transform: translate(-50%, -50%);
-      width: 20px;
-      height: 20px;
+      width: 22px;
+      height: 22px;
+      border: 2px solid rgba(255,255,255,0.85);
+      border-radius: 50%;
+      box-shadow: 0 0 4px rgba(0,0,0,0.9);
       display: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     #crosshair::before, #crosshair::after {
       content: '';
       position: absolute;
-      background: rgba(255,255,255,0.8);
+      background: rgba(255,255,255,0.9);
     }
-    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
-    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
+    /* 中央ドット */
+    #crosshair::before {
+      width: 4px; height: 4px;
+      top: 50%; left: 50%;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+    }
+    /* 上部ティック(向いている方向を軽く強調) */
+    #crosshair::after {
+      width: 2px; height: 6px;
+      top: -8px; left: 50%;
+      transform: translateX(-50%);
+    }
+    #crosshair.hit-flash {
+      border-color: #e74c3c;
+      box-shadow: 0 0 10px rgba(231,76,60,0.9);
+      animation: hitMarkerPulse 0.25s ease-out;
+    }
+    #crosshair.hit-flash::before,
+    #crosshair.hit-flash::after {
+      background: #e74c3c;
+    }
+    @keyframes hitMarkerPulse {
+      0%   { transform: translate(-50%, -50%) scale(1.5); }
+      100% { transform: translate(-50%, -50%) scale(1); }
+    }
   </style>
 </head>
 <body>
@@ -192,6 +329,13 @@
       <button class="btn btn-primary" id="btn-start-xr">ヘッドセットで開始</button>
       <button class="btn btn-secondary" id="btn-start-desktop">デスクトップで試す</button>
       <p id="xr-not-supported">このデバイスはWebXR ARをサポートしていません</p>
+
+      <div id="how-to-play">
+        <p class="how-to-title">遊び方</p>
+        <p>🎯 狙う: コントローラー / マウスを向ける</p>
+        <p>🔫 撃つ: トリガー / クリック</p>
+        <p>🔄 リロード: 右手を下に傾けてキープ / Rキー</p>
+      </div>
     </div>
 
     <!-- 弾数UI: #hud の外に出して常にDOMに存在させる。表示制御はHUD.jsで行う -->
@@ -201,9 +345,13 @@
     </div>
     <div id="reload-indicator">↺ RELOADING...</div>
 
+    <!-- 被弾フラッシュ: HPが減った瞬間にHUD.jsがdamage-flash-activeを付け外しする -->
+    <div id="damage-flash"></div>
+
     <!-- HUD -->
     <div id="hud">
       <div id="score-display">SCORE: <span id="score-value">0</span></div>
+      <div id="combo-display">COMBO x<span id="combo-value">2</span></div>
       <div id="wave-display">WAVE <span id="wave-value">1</span></div>
       <div id="health-bar-wrap">
         <span id="health-label">HP</span>

@@ -30,9 +30,18 @@ export class HUD {
     this._crosshairEl = document.getElementById('crosshair');
 
     this._reloadEl    = document.getElementById('reload-indicator');
+    this._damageFlashEl = document.getElementById('damage-flash');
+
+    this._comboEl      = document.getElementById('combo-display');
+    this._comboValueEl = document.getElementById('combo-value');
 
     this._score = 0;
     this._health = Config.PLAYER.MAX_HEALTH;
+
+    // コンボ(連続撃破)管理
+    this._comboCount      = 0;
+    this._comboResetTimer = null;
+    this._hitFlashTimer   = null;
 
     // EventBusからの自動更新を購読
     EventBus.on('game:score-update',  this._onScoreUpdate.bind(this));
@@ -40,6 +49,7 @@ export class HUD {
     EventBus.on('game:wave-update',   this._onWaveUpdate.bind(this));
     EventBus.on('weapon:ammo-update', this._onAmmoUpdate.bind(this));
     EventBus.on('weapon:reloading',   this._onReloading.bind(this));
+    EventBus.on('weapon:hit',         this._onWeaponHit.bind(this));
   }
 
   /**
@@ -75,6 +85,7 @@ export class HUD {
     this._updateWaveDisplay(1);
     if (this._ammoEl) this._ammoEl.textContent = '12 / 12';
     if (this._reloadEl) { this._reloadEl.style.display = 'none'; }
+    this._hideCombo();
   }
 
   /**
@@ -85,8 +96,65 @@ export class HUD {
     this._score = data.score;
     this._updateScoreDisplay();
 
-    // TODO: スコアアップ時のアニメーションをここに追加できる
-    //   例: スコア表示を一時的に大きくしてfadeoutするCSSアニメーション
+    if (data.delta > 0) {
+      this._popScore(data.delta);
+      this._registerComboKill();
+    }
+  }
+
+  /**
+   * スコア加算時のポップ演出(数字の拡大 + "+delta"の浮遊テキスト)
+   * @param {number} delta
+   */
+  _popScore(delta) {
+    if (this._scoreEl) {
+      this._scoreEl.classList.remove('score-pop');
+      void this._scoreEl.offsetWidth; // 連続加算でもアニメーションを再始動させるための強制リフロー
+      this._scoreEl.classList.add('score-pop');
+    }
+
+    const scoreDisplay = document.getElementById('score-display');
+    if (!scoreDisplay) return;
+    const popup = document.createElement('div');
+    popup.className = 'score-popup';
+    popup.textContent = `+${delta}`;
+    scoreDisplay.appendChild(popup);
+    setTimeout(() => popup.remove(), 800);
+  }
+
+  /**
+   * 連続撃破(コンボ)を記録し、一定時間キルがなければ自動でリセットする
+   */
+  _registerComboKill() {
+    const COMBO_WINDOW_MS = 2000; // この時間内に次のキルがないとコンボが途切れる
+
+    this._comboCount++;
+    if (this._comboResetTimer) clearTimeout(this._comboResetTimer);
+
+    if (this._comboCount >= 2 && this._comboEl) {
+      if (this._comboValueEl) this._comboValueEl.textContent = this._comboCount;
+      this._comboEl.classList.add('combo-active');
+    }
+
+    this._comboResetTimer = setTimeout(() => this._hideCombo(), COMBO_WINDOW_MS);
+  }
+
+  _hideCombo() {
+    this._comboCount = 0;
+    if (this._comboResetTimer) { clearTimeout(this._comboResetTimer); this._comboResetTimer = null; }
+    if (this._comboEl) this._comboEl.classList.remove('combo-active');
+  }
+
+  /**
+   * 弾が敵にヒットした瞬間に照準を光らせる(ヒットマーカー)
+   */
+  _onWeaponHit() {
+    if (!this._crosshairEl) return;
+    this._crosshairEl.classList.add('hit-flash');
+    if (this._hitFlashTimer) clearTimeout(this._hitFlashTimer);
+    this._hitFlashTimer = setTimeout(() => {
+      this._crosshairEl.classList.remove('hit-flash');
+    }, 250);
   }
 
   /**
@@ -94,8 +162,19 @@ export class HUD {
    * @param {{ health: number, maxHealth: number }} data
    */
   _onHealthUpdate(data) {
+    if (data.health < this._health) this._triggerDamageFlash();
     this._health = data.health;
     this._updateHealthDisplay();
+  }
+
+  /**
+   * 被弾時に画面を赤くフラッシュさせる
+   */
+  _triggerDamageFlash() {
+    if (!this._damageFlashEl) return;
+    this._damageFlashEl.classList.remove('damage-flash-active');
+    void this._damageFlashEl.offsetWidth; // 再生中でもアニメーションを再始動させるための強制リフロー
+    this._damageFlashEl.classList.add('damage-flash-active');
   }
 
   /**
@@ -157,16 +236,18 @@ export class HUD {
     if (wave <= 1) return; // 最初のウェーブでは表示しない
 
     const banner = document.createElement('div');
-    banner.textContent = `WAVE ${wave}`;
+    banner.innerHTML = `
+      <div class="wave-banner-line"></div>
+      <div class="wave-banner-text">WAVE ${wave}</div>
+      <div class="wave-banner-sub">GET READY</div>
+      <div class="wave-banner-line"></div>
+    `;
     banner.style.cssText = `
       position: fixed;
       top: 45%;
       left: 50%;
       transform: translate(-50%, -50%);
-      font-size: 3rem;
-      font-weight: bold;
-      color: #f1c40f;
-      text-shadow: 0 0 20px rgba(241,196,15,0.8);
+      text-align: center;
       animation: waveBanner 2s ease-out forwards;
       pointer-events: none;
       z-index: 100;
