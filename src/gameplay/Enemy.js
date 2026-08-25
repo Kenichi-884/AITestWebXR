@@ -38,35 +38,71 @@ export class Enemy {
 
     // ヒット時のフラッシュ演出用タイマー
     this._hitFlashTimer = 0;
+    // 撃破時の吹き飛びアニメーション(ゲームループ管理)
+    this._dying        = false;
+    this._dyingElapsed = 0;
+    this._dyingDur     = 0.45;
+    this._dyingVel     = new THREE.Vector3();
+    // スポーン時のスケールイン演出タイマー(秒)
+    this._spawnTimer = 0.25;
+
+    // フレームごとに再利用するVector3（GCを避けるためキャッシュ）
+    this._direction = new THREE.Vector3();
+    this._reachRadiusSq = Config.ENEMY.REACH_RADIUS * Config.ENEMY.REACH_RADIUS;
 
     this.mesh = this._createMesh();
+    this.mesh.scale.setScalar(0.01); // スポーン演出: 小さい状態から始まる
     this.mesh.position.copy(spawnPosition);
     this.scene.add(this.mesh);
   }
 
   /**
    * 敵のメッシュを生成する
-   * TODO: ここを変更して見た目をカスタマイズしよう
-   *   - 形: BoxGeometry, ConeGeometry, OctahedronGeometry など
-   *   - 色: MeshPhongMaterial の color プロパティ
-   *   - サイズ: new THREE.SphereGeometry(半径, 分割数, 分割数)
+   * ウェーブ段階に応じてジオメトリが変化し、難易度を視覚的に伝える
+   *   Wave 1-2: TetrahedronGeometry (4面体・小型・鋭角)
+   *   Wave 3-4: OctahedronGeometry  (8面体・中型・標準)
+   *   Wave 5+ : IcosahedronGeometry (20面体・大型・複雑)
    * @returns {THREE.Mesh}
    */
   _createMesh() {
-    // ウェーブが進むごとに色が変わる(難易度の視覚フィードバック)
+    // ウェーブが進むごとに色相が変わる(難易度の視覚フィードバック)
     const hue = (this.wave * 0.15) % 1.0;
-    const color = new THREE.Color().setHSL(hue, 1.0, 0.5);
+    const color = new THREE.Color().setHSL(hue, 1.0, 0.55);
 
-    const geometry = new THREE.OctahedronGeometry(0.25, 0);
+    // ウェーブ段階に応じてジオメトリ・サイズを変える
+    let geometry;
+    if (this.wave <= 2) {
+      geometry = new THREE.TetrahedronGeometry(0.22, 0);
+    } else if (this.wave <= 4) {
+      geometry = new THREE.OctahedronGeometry(0.25, 0);
+    } else {
+      geometry = new THREE.IcosahedronGeometry(0.28, 0);
+    }
+
+    // ソリッドマテリアル: 高光沢・強めの自発光でネオン感を出す
     const material = new THREE.MeshPhongMaterial({
       color,
       emissive: color,
-      emissiveIntensity: 0.6,
-      shininess: 80,
+      emissiveIntensity: 0.8,
+      shininess: 150,
+      specular: new THREE.Color(0xffffff),
+      transparent: true,
+      opacity: 0.88,
     });
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
+
+    // ワイヤーフレームオーバーレイ: サイバーパンク風の縁取り
+    const wireMat = new THREE.MeshBasicMaterial({
+      color,
+      wireframe: true,
+      transparent: true,
+      opacity: 0.45,
+    });
+    const wireMesh = new THREE.Mesh(geometry, wireMat);
+    wireMesh.scale.setScalar(1.09); // 少し大きくしてソリッドからはみ出させる
+    mesh.add(wireMesh);
 
     return mesh;
   }
@@ -77,14 +113,26 @@ export class Enemy {
    * @param {THREE.Vector3} playerPosition - プレイヤーの現在位置
    */
   update(delta, playerPosition) {
+    // 撃破後の吹き飛びアニメーション(WebXR対応: ゲームループで処理)
+    if (this._dying) {
+      this._updateDying(delta);
+      return;
+    }
     if (!this.isActive || this.isDefeated) return;
 
-    // ---- 移動: プレイヤーに向かって直進 ----
-    const direction = new THREE.Vector3()
-      .subVectors(playerPosition, this.mesh.position)
-      .normalize();
+    // ---- スポーンアニメーション: 0→1.1→1.0 のオーバーシュートスケール ----
+    if (this._spawnTimer > 0) {
+      this._spawnTimer -= delta;
+      const t = 1 - Math.max(0, this._spawnTimer) / 0.25;
+      // 0〜0.75で1.15まで拡大、0.75〜1.0で1.0に収束
+      const s = t < 0.75 ? (t / 0.75) * 1.15 : 1.15 - ((t - 0.75) / 0.25) * 0.15;
+      this.mesh.scale.setScalar(Math.max(0.01, s));
+      if (this._spawnTimer <= 0) this.mesh.scale.setScalar(1);
+    }
 
-    this.mesh.position.addScaledVector(direction, this.speed * delta);
+    // ---- 移動: プレイヤーに向かって直進 ----
+    this._direction.subVectors(playerPosition, this.mesh.position).normalize();
+    this.mesh.position.addScaledVector(this._direction, this.speed * delta);
 
     // ---- 回転演出 ----
     this.mesh.rotation.x += delta * 1.5;
@@ -94,13 +142,12 @@ export class Enemy {
     if (this._hitFlashTimer > 0) {
       this._hitFlashTimer -= delta;
       if (this._hitFlashTimer <= 0) {
-        this.mesh.material.emissiveIntensity = 0.3;
+        this.mesh.material.emissiveIntensity = 0.8;
       }
     }
 
     // ---- プレイヤーへの到達判定 ----
-    const distToPlayer = this.mesh.position.distanceTo(playerPosition);
-    if (distToPlayer < Config.ENEMY.REACH_RADIUS) {
+    if (this.mesh.position.distanceToSquared(playerPosition) < this._reachRadiusSq) {
       this._onReachPlayer();
     }
   }
@@ -125,6 +172,34 @@ export class Enemy {
   }
 
   /**
+   * 撃破後の吹き飛びアニメーション (ゲームループから毎フレーム呼ばれる)
+   * ※ WebXR では window.requestAnimationFrame が停止するため
+   *    ゲームループ (EnemySpawner → Enemy.update) で処理する
+   * @param {number} delta
+   */
+  _updateDying(delta) {
+    this._dyingElapsed += delta;
+    const t = Math.min(1, this._dyingElapsed / this._dyingDur);
+
+    // 重力付き吹き飛び
+    this._dyingVel.y -= 10 * delta;
+    this.mesh.position.addScaledVector(this._dyingVel, delta);
+    this.mesh.rotation.x += delta * 8;
+    this.mesh.rotation.z += delta * 6;
+
+    // フェードアウト (本体 + ワイヤーフレーム)
+    const opacity = Math.max(0, 0.88 * (1 - t));
+    this.mesh.material.opacity = opacity;
+    const wire = this.mesh.children[0];
+    if (wire?.material) wire.material.opacity = opacity * 0.5;
+
+    if (t >= 1) {
+      this._dying = false;
+      if (this.mesh.parent) this.scene.remove(this.mesh);
+    }
+  }
+
+  /**
    * 撃破時の処理
    */
   _defeat() {
@@ -137,11 +212,17 @@ export class Enemy {
     });
     EventBus.emit('sound:play', { id: 'defeat' });
 
-    // TODO: 撃破エフェクト(パーティクルなど)をここに追加できる
-
-    this.scene.remove(this.mesh);
-    this.mesh.geometry.dispose();
-    this.mesh.material.dispose();
+    // 吹き飛び初期化 (アニメーション本体は _updateDying でゲームループ処理)
+    this._dying        = true;
+    this._dyingElapsed = 0;
+    this._dyingVel.set(
+      (Math.random() - 0.5) * 6,
+      Math.random() * 4 + 2,
+      (Math.random() - 0.5) * 6,
+    );
+    this.mesh.material.transparent = true;
+    const wire = this.mesh.children[0];
+    if (wire?.material) wire.material.transparent = true;
   }
 
   /**
@@ -167,10 +248,51 @@ export class Enemy {
   }
 
   /**
+   * プール再利用: 位置・パラメータをリセットしてシーンに戻す
+   * @param {THREE.Vector3} spawnPosition
+   * @param {{ hp: number, speed: number, wave: number }} options
+   */
+  reset(spawnPosition, options = {}) {
+    this.hp    = options.hp    ?? Config.ENEMY.BASE_HP;
+    this.speed = options.speed ?? Config.ENEMY.BASE_SPEED;
+    this.wave  = options.wave  ?? 1;
+    this.isDefeated = false;
+    this.isActive   = true;
+    this._hitFlashTimer = 0;
+    this._reachRadiusSq = Config.ENEMY.REACH_RADIUS * Config.ENEMY.REACH_RADIUS;
+
+    this._dying        = false; // 吹き飛びアニメーションをキャンセル
+    this._dyingElapsed = 0;
+    this._spawnTimer   = 0.25; // スポーンアニメーションをリセット
+    this.mesh.scale.setScalar(0.01);
+
+    // ウェーブに応じた色を更新(ソリッド + ワイヤーフレーム両方)
+    const hue = (this.wave * 0.15) % 1.0;
+    const color = new THREE.Color().setHSL(hue, 1.0, 0.55);
+    this.mesh.material.color.set(color);
+    this.mesh.material.emissive.set(color);
+    this.mesh.material.emissiveIntensity = 0.8;
+    this.mesh.material.opacity = 0.88; // 透明度をリセット
+    const wire = this.mesh.children[0];
+    if (wire) {
+      wire.material.color.set(color);
+      wire.material.opacity = 0.45; // ワイヤーフレームの透明度もリセット
+    }
+
+    this.mesh.position.copy(spawnPosition);
+    if (!this.mesh.parent) this.scene.add(this.mesh);
+  }
+
+  /**
    * 手動で敵を除去する(ゲームリセット時など)
    */
   destroy() {
+    this._dying = false; // 吹き飛びアニメーションをキャンセル
     if (this.mesh.parent) this.scene.remove(this.mesh);
+    this.mesh.geometry.dispose();
+    this.mesh.material.dispose();
+    const wire = this.mesh.children[0];
+    if (wire) wire.material.dispose(); // ジオメトリは共有なのでdisposeしない
     this.isActive = false;
     this.isDefeated = true;
   }

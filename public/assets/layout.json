@@ -36,29 +36,33 @@
 
   "weapon": {
     "_comment": "Weapon model settings. Adjust xr / desktop separately.",
-    "_note": "Converting FBX to GLB (Blender: File > Export > glTF 2.0) improves load speed.",
-    "modelPath": "/assets/pistol/models/",
-    "modelFile": "pistol-92.fbx",
-    "texturesPath": "/assets/pistol/textures/",
+    "_note": "GLB models bundle their own textures, so texturesPath is unused for this weapon.",
+    "modelPath": "/assets/revolver/models/",
+    "modelFile": "cyberwrath_-_revolver.glb",
     "hand": "right",
-    "slideNodeName": "Cube001",
+    "slideNodeName": "",
     "_slideAxisNote": "スライドの移動軸: x / y / z (マイナスにしたい場合は -x / -y / -z)",
     "slideAxis": "x",
+    "_muzzleOffsetNote": "GLB頂点データ解析で求めたモデルローカル座標系での銃口の位置・向き(赤いレーザーラインの発射元)。モデルを差し替えた場合は再計算が必要。",
+    "muzzleOffset": {
+      "position": [1.3562, -0.3927, -1.7912],
+      "direction": [0.5633, -0.2482, -0.7881]
+    },
 
     "xr": {
       "_comment": "Meta Quest controller grip attachment",
       "_tip": "If gun faces wrong way, adjust rotation Y in 90-degree increments",
-      "position": [0.0, 0.03, 0.0],
-      "rotation": [-45, 290, 0],
-      "scale": [0.0002, 0.0002, 0.0002]
+      "position": [-0.05, -0.1593, -0.1661],
+      "rotation": [-43, 47, 29],
+      "scale": [0.15, 0.15, 0.15]
     },
 
     "desktop": {
       "_comment": "Desktop FPS view (attached to camera, lower-right)",
       "_tip": "Adjust position X to move left/right, Y for up/down, Z for distance",
-      "position": [0.12, -0.08, -0.33],
-      "rotation": [-40, 265, -5],
-      "scale": [0.0002, 0.0002, 0.0002]
+      "position": [0.07, -0.2393, -0.4961],
+      "rotation": [-43, 47, 29],
+      "scale": [0.15, 0.15, 0.15]
     }
   }
 }

@@ -43,8 +43,11 @@ export class SceneManager {
 
     EventBus.on('weapon:fired', () => this._triggerSlideAnim());
 
+    this._controllers = [];
     this._controllerGrips = [];
     this._controllerRays = [];
+    /** @type {THREE.Line|null} 武器モデルの子として銃口に追従するレーザー */
+    this._muzzleRay = null;
 
     // デスクトップ用: カメラに追従する武器ホルダー
     this._desktopWeaponHolder = new THREE.Group();
@@ -75,7 +78,9 @@ export class SceneManager {
 
     const dirLight = new THREE.DirectionalLight(0xffffff, Config.SCENE.DIR_LIGHT_INTENSITY);
     dirLight.position.set(3, 5, 3);
-    dirLight.castShadow = true;
+    // WebXR(Quest)ではシャドウマップの計算コストが高いため無効化
+    // 影なしでもAmbientLight + HemisphereLight で十分な品質が得られる
+    dirLight.castShadow = false;
     this.scene.add(dirLight);
 
     const accentLight = new THREE.PointLight(0x0044ff, 0.3, 10);
@@ -99,6 +104,7 @@ export class SceneManager {
     for (let i = 0; i < 2; i++) {
       const controller = this.renderer.xr.getController(i);
       this.scene.add(controller);
+      this._controllers.push(controller);
 
       const ray = this._createControllerRay();
       controller.add(ray);
@@ -120,6 +126,37 @@ export class SceneManager {
     }));
   }
 
+  /**
+   * 銃口から出るレーザーを武器モデルの子として生成する
+   * (layout.json の muzzleOffset = モデルローカル座標での銃口位置/向き。
+   *  GLB頂点データ解析で求めた値。武器の position/rotation/scale をどう調整しても自動追従する)
+   */
+  _createMuzzleRay(weaponConfig) {
+    const off = weaponConfig.muzzleOffset;
+    if (!off || !this.weaponModel) return;
+
+    const start = new THREE.Vector3(...off.position);
+    const dir = new THREE.Vector3(...off.direction).normalize();
+    // レイの長さ(ローカル単位): 現在のscaleでワールド換算 約10mになるよう逆算
+    const scale = weaponConfig.xr?.scale?.[0] || 1;
+    const end = start.clone().addScaledVector(dir, 10 / scale);
+
+    const geo = new THREE.BufferGeometry().setFromPoints([start, end]);
+    this._muzzleRay = new THREE.Line(geo, new THREE.LineBasicMaterial({
+      color: 0xff4444, transparent: true, opacity: 0.6,
+    }));
+    this._muzzleRay.visible = this._weaponMode === 'xr';
+    this.weaponModel.add(this._muzzleRay);
+
+    // 元のコントローラーレーザーは銃口レーザーと重複するので、武器を持つ手の分は非表示にする
+    const handIndex = weaponConfig.hand === 'left' ? 0 : 1;
+    const oldRay = this._controllerRays[handIndex];
+    if (oldRay) {
+      this._controllers[handIndex]?.remove(oldRay);
+      this._controllerRays[handIndex] = null;
+    }
+  }
+
   // ─── 武器モード切替 (App.js から呼ぶ) ────────────────────
 
   /**
@@ -131,8 +168,9 @@ export class SceneManager {
 
     // デスクトップではコントローラーのレーザーを非表示
     for (const ray of this._controllerRays) {
-      ray.visible = mode === 'xr';
+      if (ray) ray.visible = mode === 'xr';
     }
+    if (this._muzzleRay) this._muzzleRay.visible = mode === 'xr';
 
     if (this.weaponModel) this._attachWeapon(mode);
   }
@@ -224,7 +262,7 @@ export class SceneManager {
         model = await new Promise((resolve, reject) =>
           loader.load(path, resolve, undefined, reject),
         );
-        this._applyFbxMaterials(model, weaponConfig.texturesPath);
+        await this._applyFbxMaterials(model, weaponConfig.texturesPath);
       } else {
         model = (await loader.loadAsync(path)).scene;
       }
@@ -234,6 +272,7 @@ export class SceneManager {
       this._slideAxis = weaponConfig.slideAxis ?? 'x';
       this._findSlideNode(model, weaponConfig.slideNodeName ?? '');
       this._attachWeapon(this._weaponMode);
+      this._createMuzzleRay(weaponConfig);
       console.log('[SceneManager] Weapon loaded:', path);
     } catch (e) {
       console.warn('[SceneManager] Weapon load failed, using placeholder:', e);
@@ -250,7 +289,7 @@ export class SceneManager {
    *   - roughness / metalness で物理ベースのリアルな質感が出る
    *   - MeshPhongMaterial より照明の計算が正確
    */
-  _applyFbxMaterials(model, texturesPath) {
+  async _applyFbxMaterials(model, texturesPath) {
     const texLoader = new THREE.TextureLoader();
 
     const load = (file, colorSpace = false) => new Promise((resolve) => {
@@ -268,7 +307,18 @@ export class SceneManager {
       );
     });
 
-    model.traverse(async (child) => {
+    // テクスチャを一括ロードして全メッシュで共有する（重複ロードを防ぐ）
+    const [blackDiffuse, darkDiffuse, whiteDiffuse, normal, metallic, emission] =
+      await Promise.all([
+        load('pistol-black-diffuse.png', true),
+        load('pistol-dark-diffuse.png', true),
+        load('pistol-white-diffuse.png', true),
+        load('pistol-normal.png'),
+        load('pistol-metallic.png'),
+        load('pistol-emission.png', true),
+      ]);
+
+    model.traverse((child) => {
       if (!child.isMesh) return;
 
       const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
@@ -287,22 +337,15 @@ export class SceneManager {
       child.castShadow = true;
       child.receiveShadow = true;
 
-      // Diffuse: マテリアル名で色バリエーションを判定
-      let diffuseFile = 'pistol-black-diffuse.png';
-      if (matName.includes('dark'))  diffuseFile = 'pistol-dark-diffuse.png';
-      if (matName.includes('white')) diffuseFile = 'pistol-white-diffuse.png';
+      // Diffuse: マテリアル名で色バリエーションを判定（共有テクスチャを使う）
+      let diffuse = blackDiffuse;
+      if (matName.includes('dark'))  diffuse = darkDiffuse;
+      if (matName.includes('white')) diffuse = whiteDiffuse;
 
-      const [diffuse, normal, metallic, emission] = await Promise.all([
-        load(diffuseFile, true),
-        load('pistol-normal.png'),
-        load('pistol-metallic.png'),
-        load('pistol-emission.png', true),
-      ]);
-
-      if (diffuse)  { stdMat.map = diffuse; }
-      if (normal)   { stdMat.normalMap = normal; stdMat.normalScale.set(1.2, 1.2); }
-      if (metallic) { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
-      if (emission) { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
+      if (diffuse)   { stdMat.map = diffuse; }
+      if (normal)    { stdMat.normalMap = normal; stdMat.normalScale.set(1.2, 1.2); }
+      if (metallic)  { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
+      if (emission)  { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
 
       stdMat.needsUpdate = true;
     });
