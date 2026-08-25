@@ -75,34 +75,42 @@ export class EnemySpawner {
       this._spawnEnemy(playerPosition);
     }
 
-    // 各敵の更新
+    // 各敵の更新 (isActive=通常動作, _dying=撃破後アニメーション)
     for (const enemy of this._enemies) {
-      if (enemy.isActive) {
+      if (enemy.isActive || enemy._dying) {
         enemy.update(delta, playerPosition);
       }
     }
   }
 
   /**
-   * 非アクティブになった敵を配列から除去する(App.jsから毎フレーム呼ぶ)
+   * プール方式: 非アクティブな敵は配列に残してプールとして再利用する
+   * checkCollisions/update 側で isActive を確認するため除去不要
    */
   cleanup() {
-    this._enemies = this._enemies.filter((e) => e.isActive);
+    // no-op: 敵をプールとして残す
   }
 
   /**
-   * アクティブな敵リストを返す(当たり判定用)
+   * 敵リストを返す(当たり判定用)
+   * ※ checkCollisions 側で isActive を確認するため filter 不要
    * @returns {Enemy[]}
    */
   getEnemies() {
-    return this._enemies.filter((e) => e.isActive);
+    return this._enemies;
   }
 
   /**
    * 敵を1体スポーンする
+   * プールに非アクティブな敵があれば再利用し、new Enemy() を避ける
+   * 同時出現数が MAX_ACTIVE_ENEMIES を超えた場合はスキップ(負荷制御)
    * @param {THREE.Vector3} playerPosition
    */
   _spawnEnemy(playerPosition) {
+    // 同時出現上限チェック
+    const activeCount = this._enemies.reduce((n, e) => n + (e.isActive ? 1 : 0), 0);
+    if (activeCount >= Config.SPAWNER.MAX_ACTIVE_ENEMIES) return;
+
     const position = this._calcSpawnPosition(playerPosition);
 
     const hp = Config.ENEMY.BASE_HP + (this._wave - 1) * Config.ENEMY.HP_PER_WAVE;
@@ -111,12 +119,16 @@ export class EnemySpawner {
       Config.ENEMY.MAX_SPEED,
     );
 
-    const enemy = new Enemy(this.scene, position, {
-      hp,
-      speed,
-      wave: this._wave,
-    });
+    // プールから非アクティブ かつ 吹き飛びアニメーション中でない敵を再利用する
+    const pooled = this._enemies.find((e) => !e.isActive && !e._dying);
+    if (pooled) {
+      pooled.reset(position, { hp, speed, wave: this._wave });
+      EventBus.emit('enemy:spawned', { enemy: pooled });
+      return;
+    }
 
+    // プールに空きがなければ新規生成
+    const enemy = new Enemy(this.scene, position, { hp, speed, wave: this._wave });
     this._enemies.push(enemy);
     EventBus.emit('enemy:spawned', { enemy });
   }
@@ -179,13 +191,17 @@ export class EnemySpawner {
   }
 
   /**
-   * 全敵を破棄してリセットする(ゲームリセット時)
+   * 全敵を非アクティブ化してリセットする(ゲームリセット時)
+   * プールは維持して次ゲームで再利用する
    */
   reset() {
     for (const enemy of this._enemies) {
-      enemy.destroy();
+      enemy._dying = false; // 吹き飛びアニメーションを強制キャンセル
+      if (enemy.mesh.parent) this.scene.remove(enemy.mesh);
+      enemy.isActive   = false;
+      enemy.isDefeated = true;
     }
-    this._enemies = [];
+    // _enemies は破棄せずプールとして保持
     this._isActive = false;
     this._wave = 1;
     this._killCountInWave = 0;

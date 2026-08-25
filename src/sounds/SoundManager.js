@@ -433,6 +433,21 @@ export class SoundManager {
           filter: { type: 'bandpass', freq: 2500, Q: 3 },
         },
       ],
+
+      // パワーアップ取得: 上昇する3音ジングル
+      'powerup': [
+        { type: 'square', freq: 523, duration: 0.10, volume: 0.40,
+          attack: 0.005, decay: 0.10, delay: 0.00,
+          filter: { type: 'lowpass', freq: 3000 } },
+        { type: 'square', freq: 784, duration: 0.10, volume: 0.40,
+          attack: 0.005, decay: 0.10, delay: 0.09,
+          filter: { type: 'lowpass', freq: 3000 } },
+        { type: 'square', freq: 1047, duration: 0.28, volume: 0.50,
+          attack: 0.005, decay: 0.28, delay: 0.18,
+          filter: { type: 'lowpass', freq: 3500 } },
+        { type: 'sine', freq: 2093, duration: 0.22, volume: 0.15,
+          attack: 0.01, decay: 0.22, delay: 0.20 },
+      ],
     };
   }
 

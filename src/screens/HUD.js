@@ -34,22 +34,36 @@ export class HUD {
 
     this._comboEl      = document.getElementById('combo-display');
     this._comboValueEl = document.getElementById('combo-value');
+    this._comboMultEl  = document.getElementById('combo-mult');
+    this._healthPercentEl = document.getElementById('health-percent');
+    this._ammoDotsEl      = document.getElementById('ammo-dots');
+    this._lowHpVignetteEl = document.getElementById('low-hp-vignette');
+    this._powerupDisplayEl = document.getElementById('powerup-display');
+    this._powerupLabelEl   = document.getElementById('powerup-label');
+    this._powerupBarEl     = document.getElementById('powerup-bar');
 
     this._score = 0;
     this._health = Config.PLAYER.MAX_HEALTH;
-
-    // コンボ(連続撃破)管理
-    this._comboCount      = 0;
-    this._comboResetTimer = null;
-    this._hitFlashTimer   = null;
+    this._hitFlashTimer  = null;
+    this._chFiredTimer   = null; // クロスヘアスプレッド用タイマー
 
     // EventBusからの自動更新を購読
     EventBus.on('game:score-update',  this._onScoreUpdate.bind(this));
     EventBus.on('game:health-update', this._onHealthUpdate.bind(this));
     EventBus.on('game:wave-update',   this._onWaveUpdate.bind(this));
+    EventBus.on('game:combo-update',  this._onComboUpdate.bind(this));
     EventBus.on('weapon:ammo-update', this._onAmmoUpdate.bind(this));
     EventBus.on('weapon:reloading',   this._onReloading.bind(this));
     EventBus.on('weapon:hit',         this._onWeaponHit.bind(this));
+    EventBus.on('powerup:activated',  this._onPowerUpActivated.bind(this));
+    EventBus.on('powerup:ended',      this._onPowerUpEnded.bind(this));
+    // 射撃時にクロスヘアを一瞬広げるスプレッド演出
+    EventBus.on('weapon:fired', () => {
+      if (!this._crosshairEl) return;
+      this._crosshairEl.classList.add('ch-fired');
+      clearTimeout(this._chFiredTimer);
+      this._chFiredTimer = setTimeout(() => this._crosshairEl.classList.remove('ch-fired'), 100);
+    });
   }
 
   /**
@@ -83,9 +97,14 @@ export class HUD {
     this._updateScoreDisplay();
     this._updateHealthDisplay();
     this._updateWaveDisplay(1);
-    if (this._ammoEl) this._ammoEl.textContent = '12 / 12';
+    if (this._ammoEl) this._ammoEl.textContent = '12';
+    this._updateAmmoDots(Config.WEAPON.MAX_AMMO, Config.WEAPON.MAX_AMMO);
     if (this._reloadEl) { this._reloadEl.style.display = 'none'; }
+    document.getElementById('ammo-display')?.classList.remove('ammo-critical');
+    if (this._lowHpVignetteEl) this._lowHpVignetteEl.classList.remove('active');
+    if (this._crosshairEl) this._crosshairEl.classList.remove('ch-fired');
     this._hideCombo();
+    this._onPowerUpEnded();
   }
 
   /**
@@ -97,16 +116,16 @@ export class HUD {
     this._updateScoreDisplay();
 
     if (data.delta > 0) {
-      this._popScore(data.delta);
-      this._registerComboKill();
+      this._popScore(data.delta, data.multiplier ?? 1);
     }
   }
 
   /**
-   * スコア加算時のポップ演出(数字の拡大 + "+delta"の浮遊テキスト)
+   * スコア加算時のポップ演出(数字の拡大 + "+delta ×multiplier"の浮遊テキスト)
    * @param {number} delta
+   * @param {number} multiplier コンボ倍率(1より大きいと倍率を表示)
    */
-  _popScore(delta) {
+  _popScore(delta, multiplier = 1) {
     if (this._scoreEl) {
       this._scoreEl.classList.remove('score-pop');
       void this._scoreEl.offsetWidth; // 連続加算でもアニメーションを再始動させるための強制リフロー
@@ -117,32 +136,42 @@ export class HUD {
     if (!scoreDisplay) return;
     const popup = document.createElement('div');
     popup.className = 'score-popup';
-    popup.textContent = `+${delta}`;
+    popup.textContent = multiplier > 1 ? `+${delta}  ×${multiplier}` : `+${delta}`;
     scoreDisplay.appendChild(popup);
     setTimeout(() => popup.remove(), 800);
   }
 
   /**
-   * 連続撃破(コンボ)を記録し、一定時間キルがなければ自動でリセットする
+   * App.jsからのコンボ更新イベントを受けてコンボ表示を更新する
+   * @param {{ count: number, multiplier: number }} data
    */
-  _registerComboKill() {
-    const COMBO_WINDOW_MS = 2000; // この時間内に次のキルがないとコンボが途切れる
-
-    this._comboCount++;
-    if (this._comboResetTimer) clearTimeout(this._comboResetTimer);
-
-    if (this._comboCount >= 2 && this._comboEl) {
-      if (this._comboValueEl) this._comboValueEl.textContent = this._comboCount;
-      this._comboEl.classList.add('combo-active');
+  _onComboUpdate({ count, multiplier }) {
+    if (count < 2) {
+      this._hideCombo();
+      return;
     }
+    if (this._comboValueEl) this._comboValueEl.textContent = count;
+    if (this._comboMultEl)  this._comboMultEl.textContent  = multiplier > 1 ? `×${multiplier}` : '';
+    if (this._comboEl) this._comboEl.classList.add('combo-active');
 
-    this._comboResetTimer = setTimeout(() => this._hideCombo(), COMBO_WINDOW_MS);
+    // キルストリークアナウンス(特定コンボ数で表示)
+    const KILLSTREAK = { 3: 'TRIPLE KILL!', 5: 'KILLING SPREE!', 10: 'UNSTOPPABLE!!' };
+    if (KILLSTREAK[count]) this._showKillstreak(KILLSTREAK[count], multiplier);
   }
 
   _hideCombo() {
-    this._comboCount = 0;
-    if (this._comboResetTimer) { clearTimeout(this._comboResetTimer); this._comboResetTimer = null; }
     if (this._comboEl) this._comboEl.classList.remove('combo-active');
+  }
+
+  /**
+   * キルストリーク達成時のアナウンス表示
+   */
+  _showKillstreak(text, mult) {
+    const el = document.createElement('div');
+    el.className = 'killstreak-popup';
+    el.innerHTML = `<span class="ks-text">${text}</span><span class="ks-mult">SCORE ×${mult}</span>`;
+    document.getElementById('overlay').appendChild(el);
+    setTimeout(() => el.remove(), 2000);
   }
 
   /**
@@ -195,31 +224,73 @@ export class HUD {
     const pct = Math.max(0, (this._health / Config.PLAYER.MAX_HEALTH) * 100);
     this._healthBarEl.style.width = `${pct}%`;
 
-    // HPが低くなったら色を変える
+    // HPが低くなるほど赤に変化
+    let color, glow;
     if (pct > 60) {
-      this._healthBarEl.style.background = '#2ecc71'; // 緑
+      color = 'var(--green)'; glow = 'rgba(48,209,88,0.5)';
     } else if (pct > 30) {
-      this._healthBarEl.style.background = '#f39c12'; // 黄
+      color = 'var(--warn)';  glow = 'rgba(255,214,10,0.5)';
     } else {
-      this._healthBarEl.style.background = '#e74c3c'; // 赤
+      color = 'var(--danger)'; glow = 'rgba(255,45,85,0.6)';
+    }
+    this._healthBarEl.style.background = color;
+    this._healthBarEl.style.boxShadow  = `0 0 8px ${glow}`;
+
+    if (this._healthPercentEl) {
+      this._healthPercentEl.textContent = `${Math.round(pct)}%`;
+      this._healthPercentEl.style.color = color;
+    }
+
+    // 低HP時のビネット: 30%以下でアクティブ
+    if (this._lowHpVignetteEl) {
+      if (pct <= 30 && pct > 0) {
+        this._lowHpVignetteEl.classList.add('active');
+      } else {
+        this._lowHpVignetteEl.classList.remove('active');
+      }
     }
   }
 
   _onAmmoUpdate({ ammo, max }) {
-    if (this._ammoEl) this._ammoEl.textContent = `${ammo} / ${max}`;
-    if (this._reloadEl) this._reloadEl.style.display = 'none';
-    // 残弾0で赤くする
     if (this._ammoEl) {
-      this._ammoEl.style.color = ammo === 0 ? '#e74c3c' : '#fff';
+      this._ammoEl.textContent = ammo;
+      this._ammoEl.style.color = ammo === 0 ? 'var(--danger)' : 'var(--text)';
+    }
+    if (this._reloadEl) this._reloadEl.style.display = 'none';
+    this._updateAmmoDots(ammo, max);
+
+    // 残弾3発以下で点滅警告
+    const ammoDisplay = document.getElementById('ammo-display');
+    if (ammoDisplay) {
+      if (ammo > 0 && ammo <= 3) {
+        ammoDisplay.classList.add('ammo-critical');
+      } else {
+        ammoDisplay.classList.remove('ammo-critical');
+      }
     }
   }
 
   _onReloading({ reloadTime }) {
-    if (this._ammoEl) { this._ammoEl.textContent = '-- / --'; this._ammoEl.style.color = '#f39c12'; }
+    if (this._ammoEl) {
+      this._ammoEl.textContent = '--';
+      this._ammoEl.style.color = 'var(--warn)';
+    }
     if (this._reloadEl) {
       this._reloadEl.style.display = 'block';
       this._reloadEl.style.animationDuration = `${reloadTime}s`;
     }
+  }
+
+  /**
+   * 弾数ドットを更新する
+   * @param {number} ammo 現在の弾数
+   * @param {number} max 最大弾数
+   */
+  _updateAmmoDots(ammo, max) {
+    if (!this._ammoDotsEl) return;
+    this._ammoDotsEl.innerHTML = Array.from({ length: max }, (_, i) =>
+      `<span class="ammo-dot${i < ammo ? ' loaded' : ''}"></span>`,
+    ).join('');
   }
 
   _updateWaveDisplay(wave) {
@@ -270,6 +341,31 @@ export class HUD {
 
     document.getElementById('overlay').appendChild(banner);
     setTimeout(() => banner.remove(), 2100);
+  }
+
+  /**
+   * パワーアップ取得時の表示
+   * @param {{ type: string, duration: number }} data
+   */
+  _onPowerUpActivated({ type, duration }) {
+    if (!this._powerupDisplayEl) return;
+    const labels = { power: 'POWER ×5', rapid: 'RAPID FIRE', shotgun: 'SHOTGUN' };
+    if (this._powerupLabelEl) this._powerupLabelEl.textContent = labels[type] ?? type;
+
+    this._powerupDisplayEl.className = `powerup-active pu-${type}`;
+    this._powerupDisplayEl.style.display = 'flex';
+
+    // タイマーバーをCSS animationで制御
+    if (this._powerupBarEl) {
+      this._powerupBarEl.style.animationDuration = `${duration}s`;
+      this._powerupBarEl.classList.remove('pu-bar-run');
+      void this._powerupBarEl.offsetWidth; // 強制リフロー
+      this._powerupBarEl.classList.add('pu-bar-run');
+    }
+  }
+
+  _onPowerUpEnded() {
+    if (this._powerupDisplayEl) this._powerupDisplayEl.style.display = 'none';
   }
 
   get score() {

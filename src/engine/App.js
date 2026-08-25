@@ -17,8 +17,10 @@ import * as THREE from 'three';
 import { SceneManager } from './SceneManager.js';
 import { EnemySpawner } from '../gameplay/EnemySpawner.js';
 import { Weapon } from '../gameplay/Weapon.js';
+import { ItemDrop } from '../gameplay/ItemDrop.js';
 import { EffectManager } from '../effects/EffectManager.js';
 import { HUD } from '../screens/HUD.js';
+import { WorldHUD } from '../screens/WorldHUD.js';
 import { MenuScreen } from '../screens/MenuScreen.js';
 import { SoundManager } from '../sounds/SoundManager.js';
 import EventBus from '../common/EventBus.js';
@@ -44,7 +46,7 @@ class App {
     this._renderer.setSize(window.innerWidth, window.innerHeight);
     this._renderer.xr.enabled = true;
     this._renderer.shadowMap.enabled = true;
-    this._renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this._renderer.shadowMap.type = THREE.BasicShadowMap;
     this._renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this._renderer.toneMappingExposure = 1.0;
 
@@ -54,7 +56,8 @@ class App {
     this._effectManager = new EffectManager(this._sceneManager.scene);
     this._enemySpawner  = new EnemySpawner(this._sceneManager.scene);
     this._weapon        = new Weapon(this._sceneManager.scene, this._renderer, this._sceneManager.camera);
-    this._hud = new HUD();
+    this._hud      = new HUD();
+    this._worldHUD = new WorldHUD(this._sceneManager.scene, this._sceneManager.camera);
     this._menu = new MenuScreen({
       onStartXR:      () => this._startXR(),
       onStartDesktop: () => this._startDesktop(),
@@ -62,14 +65,39 @@ class App {
       onToMenu:       () => this._toMenu(),
     });
 
+    // コンボ管理(スコア倍率付き) / カメラシェイク / ヒットポーズ
+    this._comboCount    = 0;
+    this._comboTimer    = null;
+    this._shakePower    = 0;
+    this._hitstopFrames = 0; // 撃破時に数フレーム停止して重さを演出
+
+    // アイテムドロップ管理
+    /** @type {ItemDrop[]} */
+    this._items = [];
+
     // ── EventBus ────────────────────────────────────────────
-    EventBus.on('enemy:defeated',        ({ score }) => this._addScore(score));
-    EventBus.on('enemy:reached-player',  ({ damage }) => this._applyDamage(damage));
+    EventBus.on('enemy:defeated', ({ enemy, score }) => {
+      this._hitstopFrames = 3;
+      this._registerCombo();
+      this._addScore(Math.round(score * this._comboMultiplier()), this._comboMultiplier());
+      this._tryDropItem(enemy);
+    });
+    EventBus.on('item:collected', ({ type }) => {
+      this._weapon.activatePowerUp(type, Config.POWERUP.DURATION);
+    });
+    EventBus.on('enemy:reached-player', ({ damage }) => {
+      this._applyDamage(damage);
+      this._triggerShake(false); // 被弾: 大きめのシェイク
+    });
+    EventBus.on('weapon:fired', () => this._triggerShake(true)); // 射撃: 小さいシェイク
 
     // ── デスクトップ: マウスルック ────────────────────────────
     this._yaw = 0;
     this._pitch = 0;
     this._setupMouseLook();
+
+    // フレームごとに再利用するVector3（GCを避けるためキャッシュ）
+    this._playerPos = new THREE.Vector3();
 
     this._checkXRSupport();
     this._renderer.setAnimationLoop(this._onAnimationFrame.bind(this));
@@ -96,11 +124,15 @@ class App {
         domOverlay: { root: document.getElementById('overlay') },
       });
       await this._renderer.xr.setSession(session);
+      // Quest では devicePixelRatio=1 にするだけで GPU 負荷が大幅に下がる
+      this._renderer.setPixelRatio(1);
       this._sceneManager.setWeaponMode('xr');
       this._isDesktopMode = false;
       this._startGame();
+      this._worldHUD.show();
       session.addEventListener('end', () => {
         if (this._state === STATE.PLAYING) this._endGame();
+        this._worldHUD.hide();
       });
     } catch (err) {
       console.error('[App] XR session failed:', err);
@@ -126,6 +158,15 @@ class App {
     this._yaw = 0;
     this._pitch = 0;
 
+    this._comboCount    = 0;
+    this._hitstopFrames = 0;
+    if (this._comboTimer) { clearTimeout(this._comboTimer); this._comboTimer = null; }
+    this._shakePower = 0;
+
+    // アイテムをリセット
+    for (const item of this._items) item.destroy();
+    this._items = [];
+
     this._menu.hideMenu();
     this._menu.hideResult();
     this._hud.show();
@@ -147,6 +188,10 @@ class App {
     this._enemySpawner.stop();
     this._weapon.stop();
     this._hud.hide();
+    this._worldHUD.hide();
+
+    for (const item of this._items) item.destroy();
+    this._items = [];
 
     const wave = this._enemySpawner.wave;
     EventBus.emit('game:over', { finalScore: this._score, wave });
@@ -158,17 +203,23 @@ class App {
     this._weapon.reset();
     if (this._isDesktopMode) this._requestPointerLock();
     this._startGame();
+    if (this._renderer.xr.isPresenting) this._worldHUD.show();
   }
 
   _toMenu() {
     if (this._renderer.xr.isPresenting) {
       this._renderer.xr.getSession()?.end();
     }
+    // XR 終了時にピクセルレートを元に戻す
+    this._renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     this._exitPointerLock();
     this._state = STATE.MENU;
     this._enemySpawner.reset();
     this._weapon.reset();
+    for (const item of this._items) item.destroy();
+    this._items = [];
     this._hud.hide();
+    this._worldHUD.hide();
     this._menu.hideResult();
     this._sceneManager.setWeaponMode('xr');
     if (this._isDesktopMode) {
@@ -178,11 +229,61 @@ class App {
     this._checkXRSupport();
   }
 
+  // ── アイテムドロップ ─────────────────────────────────────
+
+  /**
+   * 敵撃破時に確率でアイテムをドロップする
+   * @param {import('../gameplay/Enemy.js').Enemy} enemy
+   */
+  _tryDropItem(enemy) {
+    if (!enemy || Math.random() > Config.POWERUP.DROP_CHANCE) return;
+    const types = ['power', 'rapid', 'shotgun'];
+    const type  = types[Math.floor(Math.random() * types.length)];
+    const pos   = enemy.position.clone();
+    this._items.push(new ItemDrop(this._sceneManager.scene, pos, type));
+  }
+
   // ── スコア / ダメージ ────────────────────────────────────
 
-  _addScore(delta) {
+  _addScore(delta, multiplier = 1) {
     this._score += delta;
-    EventBus.emit('game:score-update', { score: this._score, delta });
+    EventBus.emit('game:score-update', { score: this._score, delta, multiplier });
+  }
+
+  // ── コンボ管理 ────────────────────────────────────────────
+
+  _registerCombo() {
+    this._comboCount++;
+    if (this._comboTimer) clearTimeout(this._comboTimer);
+    // 2秒間キルがなければコンボリセット
+    this._comboTimer = setTimeout(() => {
+      this._comboCount = 0;
+      EventBus.emit('game:combo-update', { count: 0, multiplier: 1 });
+    }, 2000);
+    EventBus.emit('game:combo-update', { count: this._comboCount, multiplier: this._comboMultiplier() });
+  }
+
+  /** コンボ数に応じたスコア倍率 */
+  _comboMultiplier() {
+    if (this._comboCount <  2) return 1;
+    if (this._comboCount <  4) return 1.5;
+    if (this._comboCount <  7) return 2;
+    if (this._comboCount < 11) return 3;
+    return 5;
+  }
+
+  // ── カメラシェイク ─────────────────────────────────────────
+
+  /**
+   * オーバーレイ全体をCSSアニメーションで揺らす(XR・デスクトップ共用)
+   * @param {boolean} small true=小(射撃), false=大(被弾)
+   */
+  _triggerShake(small = true) {
+    const el = document.getElementById('overlay');
+    if (!el) return;
+    el.classList.remove('shake-sm', 'shake-lg');
+    void el.offsetWidth; // アニメーションを再起動させるための強制リフロー
+    el.classList.add(small ? 'shake-sm' : 'shake-lg');
   }
 
   _applyDamage(damage) {
@@ -270,6 +371,13 @@ class App {
 
   _update(delta, frame) {
     if (this._state === STATE.PLAYING) {
+      // ヒットポーズ中もリロードタイマーは継続する
+      if (this._hitstopFrames > 0) {
+        this._hitstopFrames--;
+        this._weapon.update(delta); // リロードを継続するためにupdateは必ず呼ぶ
+        return;
+      }
+
       // デスクトップ: マウスルックでカメラ回転
       if (this._isDesktopMode) {
         this._sceneManager.camera.rotation.order = 'YXZ';
@@ -277,16 +385,21 @@ class App {
         this._sceneManager.camera.rotation.x = this._pitch;
       }
 
-      const playerPos = new THREE.Vector3();
-      this._sceneManager.camera.getWorldPosition(playerPos);
+      this._sceneManager.camera.getWorldPosition(this._playerPos);
 
       this._sceneManager.update(delta);
       this._effectManager.update(delta);
       this._weapon.update(delta);
-      this._enemySpawner.update(delta, playerPos);
+      this._worldHUD.update(delta);
+      this._enemySpawner.update(delta, this._playerPos);
       this._weapon.checkCollisions(this._enemySpawner.getEnemies());
+      this._weapon.checkItemCollisions(this._items);
       this._weapon.cleanup();
       this._enemySpawner.cleanup();
+
+      // アイテムを更新・期限切れを削除
+      for (const item of this._items) item.update(delta);
+      this._items = this._items.filter((i) => i.isActive);
     }
   }
 }

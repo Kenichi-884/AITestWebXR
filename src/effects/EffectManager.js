@@ -26,6 +26,31 @@ export class EffectManager {
     // 現在表示されているエフェクト
     this._effects = [];
 
+    // 共有ジオメトリ（毎フレーム/毎エフェクトで生成するとGPUアップロードが走るためキャッシュ）
+    this._geoFlash      = new THREE.SphereGeometry(0.08, 8, 8);
+    this._geoHitRing    = new THREE.RingGeometry(0.04, 0.08, 32);
+    this._geoBurst      = new THREE.SphereGeometry(0.18, 12, 12);
+    this._geoShockwave  = new THREE.RingGeometry(0.12, 0.18, 32);
+    this._geoSpark      = new THREE.SphereGeometry(0.015, 4, 4);   // 火花: スケールで大きさを変える
+    this._geoFragment   = new THREE.OctahedronGeometry(0.05, 0);   // 破片: スケールで大きさを変える
+
+    // ── Mesh プール（事前確保・visibility 切替で GC を回避）──────────
+    // ※ _createPool は _add/_acquire より後に定義されているが、
+    //   コンストラクタ内の呼び出し時点でクラスメソッドとして解決される
+    this._pools = {
+      // マズルフラッシュ用 (射撃: ~0.3s ごと、同時1本)
+      muzzleSphere: this._createPool(this._geoFlash,     2,  { blending: THREE.AdditiveBlending, depthWrite: false }),
+      muzzleRing:   this._createPool(this._geoHitRing,   2,  { side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+      // ヒットスパーク用 (弾命中: 18火花 + flash + ring)
+      flash:        this._createPool(this._geoFlash,     4,  { blending: THREE.AdditiveBlending, depthWrite: false }),
+      spark:        this._createPool(this._geoSpark,     40, { blending: THREE.AdditiveBlending, depthWrite: false }),
+      hitRing:      this._createPool(this._geoHitRing,   4,  { side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+      // 撃破バースト用 (撃破: 20破片 + burst + shockwave)
+      burst:        this._createPool(this._geoBurst,     4,  { blending: THREE.AdditiveBlending, depthWrite: false }),
+      shockwave:    this._createPool(this._geoShockwave, 4,  { side: THREE.DoubleSide, blending: THREE.AdditiveBlending, depthWrite: false }),
+      fragment:     this._createPool(this._geoFragment,  40, { blending: THREE.AdditiveBlending, depthWrite: false }),
+    };
+
     // ─────────────────────────────
     // イベントを受け取る
     // ─────────────────────────────
@@ -52,521 +77,52 @@ export class EffectManager {
   // ============================================================
 
   update(delta) {
-
     for (const fx of this._effects) {
-
-      // 残り時間を減らす
       fx.lifetime -= delta;
+      const t = 1 - Math.max(0, fx.lifetime / fx.maxLifetime);
+      fx.onUpdate(t, fx.mesh, delta);
 
-      // 0 → 1
-      const t =
-        1 -
-        Math.max(
-          0,
-          fx.lifetime / fx.maxLifetime
-        );
-
-      // エフェクトを動かす
-      fx.onUpdate(
-        t,
-        fx.mesh,
-        delta
-      );
-
-      // 寿命が終わったら削除
       if (fx.lifetime <= 0) {
-        this.scene.remove(fx.mesh);
+        if (fx.poolName) {
+          fx.mesh.visible = false; // プールに返却（scene.remove 不要）
+        } else {
+          this.scene.remove(fx.mesh); // 非プール（PointLight 等）は通常除去
+        }
       }
     }
-
-    // 終わったエフェクトを配列から削除
-    this._effects =
-      this._effects.filter(
-        (fx) => fx.lifetime > 0
-      );
+    this._effects = this._effects.filter((fx) => fx.lifetime > 0);
   }
 
 
   // ============================================================
-  // 🔫 マズルフラッシュ
+  // 🔫 マズルフラッシュ (pool 利用)
   // ============================================================
 
-  _spawnDefeatBurst(position) {
+  _spawnMuzzleFlash(position) {
+    const sphere = this._acquire('muzzleSphere');
+    if (sphere) {
+      sphere.material.color.setHex(0xffee88);
+      sphere.material.opacity = 1.0;
+      sphere.position.copy(position);
+      sphere.scale.setScalar(1.0);
+      this._add(sphere, 0.10, (t, mesh) => {
+        mesh.material.opacity = 1 - t;
+        mesh.scale.setScalar(1 + t * 4);
+      }, 'muzzleSphere');
+    }
 
-    // ============================================================
-    // ① 白い超強力フラッシュ
-    // ============================================================
-  
-    const core = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.18, 1),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-    );
-  
-    core.position.copy(position);
-    this.scene.add(core);
-  
-    this._add(core, 0.15, (t, mesh) => {
-      mesh.scale.setScalar(1 + t * 8);
-      mesh.material.opacity = 1 - t;
-    });
-  
-  
-    // ============================================================
-    // ② メインのインク爆発
-    // ============================================================
-  
-    const COLORS = [
-      0xff2bd6, // ピンク
-      0x16e8ff, // シアン
-      0xd9ff00, // ライム
-      0xffe600, // 黄色
-    ];
-  
-    const mainColor =
-      COLORS[Math.floor(Math.random() * COLORS.length)];
-  
-  
-    const explosion = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.32, 1),
-      new THREE.MeshBasicMaterial({
-        color: mainColor,
-        transparent: true,
-        opacity: 1,
-      })
-    );
-  
-    explosion.position.copy(position);
-  
-    explosion.scale.set(
-      1.4,
-      1.0,
-      1.4
-    );
-  
-    this.scene.add(explosion);
-  
-    this._add(explosion, 0.3, (t, mesh) => {
-  
-      const punch =
-        Math.sin(t * Math.PI);
-  
-      const scale =
-        1 + punch * 5;
-  
-      mesh.scale.set(
-        scale * 1.4,
-        scale,
-        scale * 1.4
-      );
-  
-      mesh.rotation.y += 0.2;
-  
-      mesh.material.opacity =
-        1 - t;
-    });
-  
-  
-    // ============================================================
-    // ③ 反対色の外側爆発
-    // ============================================================
-  
-    const secondColor =
-      COLORS[Math.floor(Math.random() * COLORS.length)];
-  
-  
-    const outer = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(0.4, 1),
-      new THREE.MeshBasicMaterial({
-        color: secondColor,
-        transparent: true,
-        opacity: 0.8,
-        wireframe: false,
-      })
-    );
-  
-    outer.position.copy(position);
-  
-    this.scene.add(outer);
-  
-    this._add(outer, 0.35, (t, mesh) => {
-  
-      const scale =
-        1 + t * 6;
-  
-      mesh.scale.setScalar(scale);
-  
-      mesh.rotation.x += 0.05;
-      mesh.rotation.y -= 0.07;
-  
-      mesh.material.opacity =
-        (1 - t) * 0.8;
-    });
-  
-  
-    // ============================================================
-    // ④ コミック衝撃波
-    // ============================================================
-  
-    const ring = new THREE.Mesh(
-      new THREE.RingGeometry(
-        0.2,
-        0.32,
-        10
-      ),
-      new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 1,
-        side: THREE.DoubleSide,
-        blending: THREE.AdditiveBlending,
-        depthWrite: false,
-      })
-    );
-  
-    ring.position.copy(position);
-  
-    ring.rotation.x =
-      Math.PI / 2;
-  
-    this.scene.add(ring);
-  
-    this._add(ring, 0.3, (t, mesh) => {
-  
-      mesh.scale.setScalar(
-        1 + t * 12
-      );
-  
-      mesh.material.opacity =
-        (1 - t) * 0.9;
-    });
-  
-  
-    // ============================================================
-    // ⑤ アメコミ放射線
-    // ============================================================
-  
-    const LINE_COUNT = 24;
-  
-    for (let i = 0; i < LINE_COUNT; i++) {
-  
-      const direction =
-        new THREE.Vector3(
-          Math.random() - 0.5,
-          Math.random() - 0.3,
-          Math.random() - 0.5
-        ).normalize();
-  
-  
-      const length =
-        0.3 +
-        Math.random() * 0.8;
-  
-  
-      const line = new THREE.Mesh(
-  
-        new THREE.BoxGeometry(
-          0.025,
-          0.025,
-          length
-        ),
-  
-        new THREE.MeshBasicMaterial({
-          color:
-            Math.random() > 0.4
-              ? 0xffffff
-              : mainColor,
-  
-          transparent: true,
-  
-          blending:
-            THREE.AdditiveBlending,
-  
-          depthWrite: false,
-        })
-      );
-  
-  
-      line.position.copy(position);
-  
-  
-      line.quaternion.setFromUnitVectors(
-        new THREE.Vector3(0, 0, 1),
-        direction
-      );
-  
-  
-      this.scene.add(line);
-  
-  
-      const speed =
-        4 +
-        Math.random() * 8;
-  
-  
-      this._add(
-        line,
-        0.25 + Math.random() * 0.2,
-  
-        (t, mesh, delta) => {
-  
-          mesh.position.addScaledVector(
-            direction,
-            speed * delta
-          );
-  
-  
-          mesh.scale.z =
-            1 + t * 2;
-  
-  
-          mesh.material.opacity =
-            1 - t;
-        }
-      );
+    const ring = this._acquire('muzzleRing');
+    if (ring) {
+      ring.material.color.setHex(0xff8800);
+      ring.material.opacity = 0.9;
+      ring.position.copy(position);
+      ring.rotation.set(Math.random() * Math.PI, Math.random() * Math.PI, 0);
+      ring.scale.setScalar(0.5);
+      this._add(ring, 0.12, (t, mesh) => {
+        mesh.material.opacity = (1 - t) * 0.9;
+        mesh.scale.setScalar(0.5 + t * 5);
+      }, 'muzzleRing');
     }
-  
-  
-    // ============================================================
-    // ⑥ インク飛沫
-    // ============================================================
-  
-    const SPLASH_COUNT = 30;
-  
-  
-    for (let i = 0; i < SPLASH_COUNT; i++) {
-  
-      const size =
-        0.025 +
-        Math.random() * 0.09;
-  
-  
-      const splash = new THREE.Mesh(
-  
-        new THREE.SphereGeometry(
-          size,
-          5,
-          5
-        ),
-  
-        new THREE.MeshBasicMaterial({
-          color:
-            COLORS[
-              Math.floor(
-                Math.random() * COLORS.length
-              )
-            ],
-  
-          transparent: true,
-        })
-      );
-  
-  
-      splash.position.copy(position);
-  
-  
-      // 丸ではなく潰してインクっぽく
-      splash.scale.set(
-        0.5 + Math.random() * 1.5,
-        0.5 + Math.random() * 1.5,
-        0.3 + Math.random()
-      );
-  
-  
-      this.scene.add(splash);
-  
-  
-      const velocity =
-        new THREE.Vector3(
-  
-          (Math.random() - 0.5) * 10,
-  
-          Math.random() * 8 + 1,
-  
-          (Math.random() - 0.5) * 10
-        );
-  
-  
-      const lifetime =
-        0.35 +
-        Math.random() * 0.45;
-  
-  
-      this._add(
-        splash,
-        lifetime,
-  
-        (t, mesh, delta) => {
-  
-          velocity.y -=
-            10 * delta;
-  
-  
-          mesh.position.addScaledVector(
-            velocity,
-            delta
-          );
-  
-  
-          mesh.rotation.x +=
-            delta * 6;
-  
-          mesh.rotation.y +=
-            delta * 8;
-  
-  
-          mesh.material.opacity =
-            1 - t;
-  
-  
-          mesh.scale.multiplyScalar(
-            0.995
-          );
-        }
-      );
-    }
-  
-  
-    // ============================================================
-    // ⑦ 大きな漫画破片
-    // ============================================================
-  
-    const CHUNK_COUNT = 12;
-  
-  
-    for (let i = 0; i < CHUNK_COUNT; i++) {
-  
-      const chunk =
-        new THREE.Mesh(
-  
-          new THREE.TetrahedronGeometry(
-            0.07 +
-            Math.random() * 0.08
-          ),
-  
-          new THREE.MeshBasicMaterial({
-  
-            color:
-              COLORS[
-                Math.floor(
-                  Math.random() *
-                  COLORS.length
-                )
-              ],
-  
-            transparent: true,
-          })
-        );
-  
-  
-      chunk.position.copy(position);
-  
-  
-      this.scene.add(chunk);
-  
-  
-      const velocity =
-        new THREE.Vector3(
-  
-          (Math.random() - 0.5) * 9,
-  
-          Math.random() * 7 + 2,
-  
-          (Math.random() - 0.5) * 9
-        );
-  
-  
-      const spin =
-        new THREE.Vector3(
-  
-          Math.random() * 15,
-  
-          Math.random() * 15,
-  
-          Math.random() * 15
-        );
-  
-  
-      const lifetime =
-        0.5 +
-        Math.random() * 0.4;
-  
-  
-      this._add(
-        chunk,
-        lifetime,
-  
-        (t, mesh, delta) => {
-  
-          velocity.y -=
-            9 * delta;
-  
-  
-          mesh.position.addScaledVector(
-            velocity,
-            delta
-          );
-  
-  
-          mesh.rotation.x +=
-            spin.x * delta;
-  
-          mesh.rotation.y +=
-            spin.y * delta;
-  
-          mesh.rotation.z +=
-            spin.z * delta;
-  
-  
-          mesh.material.opacity =
-            1 - t;
-        }
-      );
-    }
-  
-  
-    // ============================================================
-    // ⑧ 爆発時に周囲を強く照らす
-    // ============================================================
-  
-    const lightHolder =
-      new THREE.Object3D();
-  
-  
-    lightHolder.position.copy(position);
-  
-  
-    const light =
-      new THREE.PointLight(
-        mainColor,
-        30,
-        6
-      );
-  
-  
-    lightHolder.add(light);
-  
-    this.scene.add(lightHolder);
-  
-  
-    this._add(
-      lightHolder,
-      0.2,
-  
-      (t, mesh) => {
-  
-        const pointLight =
-          mesh.children[0];
-  
-  
-        pointLight.intensity =
-          30 * (1 - t);
-      }
-    );
   }
 
 
@@ -585,56 +141,17 @@ export class EffectManager {
     // ① 命中した瞬間の白い光
     // ----------------------------------------------------------
 
-    const flash =
-      new THREE.Mesh(
-
-        new THREE.SphereGeometry(
-          0.08,
-          8,
-          8
-        ),
-
-        new THREE.MeshBasicMaterial({
-
-          color: 0xffffff,
-
-          transparent: true,
-
-          blending:
-            THREE.AdditiveBlending,
-
-          depthWrite: false,
-        })
-      );
-
-
-    flash.position.copy(
-      position
-    );
-
-
-    this.scene.add(
-      flash
-    );
-
-
-    this._add(
-
-      flash,
-
-      0.12,
-
-      (t, mesh) => {
-
-        mesh.material.opacity =
-          1 - t;
-
-
-        mesh.scale.setScalar(
-          1 + t * 5
-        );
-      }
-    );
+    const flash = this._acquire('flash');
+    if (flash) {
+      flash.material.color.setHex(0xffffff);
+      flash.material.opacity = 1.0;
+      flash.position.copy(position);
+      flash.scale.setScalar(1.0);
+      this._add(flash, 0.12, (t, mesh) => {
+        mesh.material.opacity = 1 - t;
+        mesh.scale.setScalar(1 + t * 5);
+      }, 'flash');
+    }
 
 
     // ----------------------------------------------------------
@@ -647,42 +164,13 @@ export class EffectManager {
       i++
     ) {
 
-      const mesh =
-        new THREE.Mesh(
-
-          new THREE.SphereGeometry(
-            0.015 +
-            Math.random() * 0.015,
-
-            4,
-            4
-          ),
-
-          new THREE.MeshBasicMaterial({
-
-            color:
-              Math.random() > 0.3
-                ? 0xffcc00
-                : 0xff4400,
-
-            transparent: true,
-
-            blending:
-              THREE.AdditiveBlending,
-
-            depthWrite: false,
-          })
-        );
-
-
-      mesh.position.copy(
-        position
-      );
-
-
-      this.scene.add(
-        mesh
-      );
+      const sparkScale = 1 + Math.random();
+      const mesh = this._acquire('spark');
+      if (!mesh) continue;
+      mesh.material.color.setHex(Math.random() > 0.3 ? 0xffcc00 : 0xff4400);
+      mesh.material.opacity = 1.0;
+      mesh.position.copy(position);
+      mesh.scale.setScalar(sparkScale);
 
 
       const velocity =
@@ -704,99 +192,30 @@ export class EffectManager {
         Math.random() * 0.3;
 
 
-      this._add(
-
-        mesh,
-
-        lifetime,
-
-        (t, mesh, delta) => {
-
-          // 重力
-          velocity.y -=
-            7 * delta;
-
-
-          mesh.position
-            .addScaledVector(
-              velocity,
-              delta
-            );
-
-
-          mesh.material.opacity =
-            1 - t;
-
-
-          mesh.scale.setScalar(
-            1 - t * 0.7
-          );
-        }
-      );
+      this._add(mesh, lifetime, (t, mesh, delta) => {
+        velocity.y -= 7 * delta;
+        mesh.position.addScaledVector(velocity, delta);
+        mesh.material.opacity = 1 - t;
+        mesh.scale.setScalar(sparkScale * (1 - t * 0.7));
+      }, 'spark');
     }
-
 
     // ----------------------------------------------------------
     // ③ 衝撃波
     // ----------------------------------------------------------
 
-    const ring =
-      new THREE.Mesh(
-
-        new THREE.RingGeometry(
-          0.04,
-          0.08,
-          32
-        ),
-
-        new THREE.MeshBasicMaterial({
-
-          color: 0xffaa00,
-
-          transparent: true,
-
-          side:
-            THREE.DoubleSide,
-
-          blending:
-            THREE.AdditiveBlending,
-
-          depthWrite: false,
-        })
-      );
-
-
-    ring.position.copy(
-      position
-    );
-
-
-    ring.rotation.x =
-      Math.PI / 2;
-
-
-    this.scene.add(
-      ring
-    );
-
-
-    this._add(
-
-      ring,
-
-      0.22,
-
-      (t, mesh) => {
-
-        mesh.scale.setScalar(
-          1 + t * 5
-        );
-
-
-        mesh.material.opacity =
-          (1 - t) * 0.8;
-      }
-    );
+    const ring = this._acquire('hitRing');
+    if (ring) {
+      ring.material.color.setHex(0xffaa00);
+      ring.material.opacity = 0.8;
+      ring.position.copy(position);
+      ring.rotation.x = Math.PI / 2;
+      ring.scale.setScalar(1.0);
+      this._add(ring, 0.22, (t, mesh) => {
+        mesh.scale.setScalar(1 + t * 5);
+        mesh.material.opacity = (1 - t) * 0.8;
+      }, 'hitRing');
+    }
   }
 
 
@@ -810,120 +229,35 @@ export class EffectManager {
     // ① 大きい爆発
     // ----------------------------------------------------------
 
-    const burst =
-      new THREE.Mesh(
-
-        new THREE.SphereGeometry(
-          0.18,
-          12,
-          12
-        ),
-
-        new THREE.MeshBasicMaterial({
-
-          color: 0xffffff,
-
-          transparent: true,
-
-          blending:
-            THREE.AdditiveBlending,
-
-          depthWrite: false,
-        })
-      );
-
-
-    burst.position.copy(
-      position
-    );
-
-
-    this.scene.add(
-      burst
-    );
-
-
-    this._add(
-
-      burst,
-
-      0.25,
-
-      (t, mesh) => {
-
-        mesh.scale.setScalar(
-          1 + t * 8
-        );
-
-
-        mesh.material.opacity =
-          (1 - t) *
-          (1 - t);
-      }
-    );
+    const burst = this._acquire('burst');
+    if (burst) {
+      burst.material.color.setHex(0xffffff);
+      burst.material.opacity = 1.0;
+      burst.position.copy(position);
+      burst.scale.setScalar(1.0);
+      this._add(burst, 0.25, (t, mesh) => {
+        mesh.scale.setScalar(1 + t * 8);
+        mesh.material.opacity = (1 - t) * (1 - t);
+      }, 'burst');
+    }
 
 
     // ----------------------------------------------------------
     // ② 衝撃波
     // ----------------------------------------------------------
 
-    const shockwave =
-      new THREE.Mesh(
-
-        new THREE.RingGeometry(
-          0.12,
-          0.18,
-          32
-        ),
-
-        new THREE.MeshBasicMaterial({
-
-          color: 0xff6600,
-
-          transparent: true,
-
-          side:
-            THREE.DoubleSide,
-
-          blending:
-            THREE.AdditiveBlending,
-
-          depthWrite: false,
-        })
-      );
-
-
-    shockwave.position.copy(
-      position
-    );
-
-
-    shockwave.rotation.x =
-      Math.PI / 2;
-
-
-    this.scene.add(
-      shockwave
-    );
-
-
-    this._add(
-
-      shockwave,
-
-      0.4,
-
-      (t, mesh) => {
-
-        mesh.scale.setScalar(
-          1 + t * 10
-        );
-
-
-        mesh.material.opacity =
-          (1 - t) * 0.8;
-      }
-    );
+    const shockwave = this._acquire('shockwave');
+    if (shockwave) {
+      shockwave.material.color.setHex(0xff6600);
+      shockwave.material.opacity = 0.8;
+      shockwave.position.copy(position);
+      shockwave.rotation.x = Math.PI / 2;
+      shockwave.scale.setScalar(1.0);
+      this._add(shockwave, 0.4, (t, mesh) => {
+        mesh.scale.setScalar(1 + t * 10);
+        mesh.material.opacity = (1 - t) * 0.8;
+      }, 'shockwave');
+    }
 
 
     // ----------------------------------------------------------
@@ -939,49 +273,15 @@ export class EffectManager {
       i++
     ) {
 
-      const hue =
-        Math.random();
+      const hue = Math.random();
+      const fragScale = 0.8 + Math.random() * 1.2;
 
-
-      const mesh =
-        new THREE.Mesh(
-
-          new THREE.OctahedronGeometry(
-            0.04 +
-            Math.random() * 0.06,
-
-            0
-          ),
-
-          new THREE.MeshBasicMaterial({
-
-            color:
-              new THREE.Color()
-                .setHSL(
-                  hue,
-                  1,
-                  0.6
-                ),
-
-            transparent: true,
-
-            blending:
-              THREE.AdditiveBlending,
-
-            depthWrite: false,
-          })
-        );
-
-
-      mesh.position.copy(
-        position
-      );
-
-
-      this.scene.add(
-        mesh
-      );
-
+      const mesh = this._acquire('fragment');
+      if (!mesh) continue;
+      mesh.material.color.setHSL(hue, 1, 0.6);
+      mesh.material.opacity = 1.0;
+      mesh.position.copy(position);
+      mesh.scale.setScalar(fragScale);
 
       const velocity =
         new THREE.Vector3(
@@ -1015,42 +315,14 @@ export class EffectManager {
         Math.random() * 0.5;
 
 
-      this._add(
-
-        mesh,
-
-        lifetime,
-
-        (t, mesh, delta) => {
-
-          // 重力
-          velocity.y -=
-            9.8 * delta;
-
-
-          mesh.position
-            .addScaledVector(
-              velocity,
-              delta
-            );
-
-
-          // 回転
-          mesh.rotation.x +=
-            spin.x * delta;
-
-          mesh.rotation.y +=
-            spin.y * delta;
-
-          mesh.rotation.z +=
-            spin.z * delta;
-
-
-          // 徐々に消える
-          mesh.material.opacity =
-            1 - t;
-        }
-      );
+      this._add(mesh, lifetime, (t, mesh, delta) => {
+        velocity.y -= 9.8 * delta;
+        mesh.position.addScaledVector(velocity, delta);
+        mesh.rotation.x += spin.x * delta;
+        mesh.rotation.y += spin.y * delta;
+        mesh.rotation.z += spin.z * delta;
+        mesh.material.opacity = 1 - t;
+      }, 'fragment');
     }
   }
 
@@ -1059,22 +331,48 @@ export class EffectManager {
   // 内部処理
   // ============================================================
 
-  _add(
-    mesh,
-    lifetime,
-    onUpdate
-  ) {
+  /**
+   * @param {THREE.Object3D} mesh
+   * @param {number} lifetime
+   * @param {Function} onUpdate
+   * @param {string|null} poolName - プール名(nullなら通常の scene.remove)
+   */
+  _add(mesh, lifetime, onUpdate, poolName = null) {
+    this._effects.push({ mesh, lifetime, maxLifetime: lifetime, onUpdate, poolName });
+  }
 
-    this._effects.push({
+  // ── プール管理 ────────────────────────────────────────────
 
-      mesh,
-
-      lifetime,
-
-      maxLifetime:
-        lifetime,
-
-      onUpdate,
+  /**
+   * 指定ジオメトリ・マテリアル設定で mesh を count 個プール生成しシーンに追加する
+   * @param {THREE.BufferGeometry} geo
+   * @param {number} count
+   * @param {object} matOpts THREE.MeshBasicMaterial に渡すオプション
+   * @returns {THREE.Mesh[]}
+   */
+  _createPool(geo, count, matOpts = {}) {
+    return Array.from({ length: count }, () => {
+      const mat = new THREE.MeshBasicMaterial({ transparent: true, ...matOpts });
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.visible = false;
+      this.scene.add(mesh);
+      return mesh;
     });
+  }
+
+  /**
+   * プールから未使用メッシュを取り出す（visible=true にして返す）
+   * 全て使用中のときは null を返す（エフェクトをスキップ）
+   * @param {string} poolName
+   * @returns {THREE.Mesh|null}
+   */
+  _acquire(poolName) {
+    for (const mesh of this._pools[poolName]) {
+      if (!mesh.visible) {
+        mesh.visible = true;
+        return mesh;
+      }
+    }
+    return null;
   }
 }

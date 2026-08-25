@@ -47,11 +47,24 @@ export class Weapon {
     this._reloadTimer = 0;
     this._tiltTimer   = 0; // コントローラー傾き持続時間
 
+    // パワーアップ管理
+    this._powerUp      = null; // 'power' | 'rapid' | 'shotgun' | null
+    this._powerUpTimer = 0;
+
+    // 長押し連射管理
+    this._heldControllers = new Set(); // XR: 押しっぱなしのコントローラー
+    this._mouseHeld       = false;     // Desktop: マウス押しっぱなし
+
     /** @type {THREE.BufferGeometry|null} */
     this._bulletGeo = null;
     /** @type {THREE.Material|null} */
     this._bulletMat = null;
     this._loadBulletModel();
+
+    // フレームごとに再利用するオブジェクト（GCを避けるためキャッシュ）
+    this._reloadQuat = new THREE.Quaternion();
+    this._reloadForward = new THREE.Vector3();
+    this._hitRadiusSq = (Config.ENEMY.HIT_RADIUS + Config.WEAPON.BULLET_RADIUS) ** 2;
 
     this._setupDesktopInput();
     this._setupXRInput();
@@ -67,11 +80,15 @@ export class Weapon {
     this._isReloading = false;
     this._reloadTimer = 0;
     this._tiltTimer   = 0;
+    this._powerUp      = null;
+    this._powerUpTimer = 0;
     this._emitAmmo();
   }
 
   stop() {
     this._isActive = false;
+    this._heldControllers.clear();
+    this._mouseHeld = false;
   }
 
   reset() {
@@ -86,6 +103,10 @@ export class Weapon {
     this._isReloading = false;
     this._reloadTimer = 0;
     this._tiltTimer   = 0;
+    this._powerUp      = null;
+    this._powerUpTimer = 0;
+    this._heldControllers.clear();
+    this._mouseHeld = false;
   }
 
   // ─── 毎フレーム処理 ──────────────────────────────────────
@@ -95,6 +116,15 @@ export class Weapon {
 
     if (this._cooldown > 0) this._cooldown -= delta;
 
+    // 長押し連射: XR コントローラー
+    for (const ctrl of this._heldControllers) {
+      this._fireFromController(ctrl);
+    }
+    // 長押し連射: デスクトップ マウス
+    if (this._mouseHeld && !this.renderer.xr.isPresenting) {
+      this._fireFromCamera();
+    }
+
     // リロード処理
     if (this._isReloading) {
       this._reloadTimer -= delta;
@@ -102,6 +132,16 @@ export class Weapon {
         this._ammo        = Config.WEAPON.MAX_AMMO;
         this._isReloading = false;
         this._emitAmmo();
+      }
+    }
+
+    // パワーアップタイマー
+    if (this._powerUpTimer > 0) {
+      this._powerUpTimer -= delta;
+      if (this._powerUpTimer <= 0) {
+        this._powerUp      = null;
+        this._powerUpTimer = 0;
+        EventBus.emit('powerup:ended', {});
       }
     }
 
@@ -119,11 +159,7 @@ export class Weapon {
 
       // トレイル: 先頭に現在位置を挿入、末尾を押し出す
       const tp = bullet.trailPos;
-      for (let i = TRAIL_MAX - 1; i > 0; i--) {
-        tp[i * 3]     = tp[(i - 1) * 3];
-        tp[i * 3 + 1] = tp[(i - 1) * 3 + 1];
-        tp[i * 3 + 2] = tp[(i - 1) * 3 + 2];
-      }
+      tp.copyWithin(3, 0, (TRAIL_MAX - 1) * 3);
       tp[0] = bullet.mesh.position.x;
       tp[1] = bullet.mesh.position.y;
       tp[2] = bullet.mesh.position.z;
@@ -147,17 +183,49 @@ export class Weapon {
       if (!bullet.active) continue;
       for (const enemy of enemies) {
         if (!enemy.isActive) continue;
-        const dist = bullet.mesh.position.distanceTo(enemy.position);
-        if (dist < Config.ENEMY.HIT_RADIUS + Config.WEAPON.BULLET_RADIUS) {
+        if (bullet.mesh.position.distanceToSquared(enemy.position) < this._hitRadiusSq) {
           bullet.active = false;
           this.scene.remove(bullet.mesh);
           this._removeTrail(bullet);
-          enemy.hit();
+          enemy.hit(bullet.damage ?? 1);
           EventBus.emit('weapon:hit', { bullet, enemy });
           break;
         }
       }
     }
+  }
+
+  /**
+   * アイテムとの当たり判定
+   * @param {import('./ItemDrop.js').ItemDrop[]} items
+   */
+  checkItemCollisions(items) {
+    const RADIUS_SQ = 0.22 * 0.22;
+    for (const bullet of this._bullets) {
+      if (!bullet.active) continue;
+      for (const item of items) {
+        if (!item.isActive) continue;
+        if (bullet.mesh.position.distanceToSquared(item.position) < RADIUS_SQ) {
+          bullet.active = false;
+          this.scene.remove(bullet.mesh);
+          this._removeTrail(bullet);
+          item.collect();
+          break;
+        }
+      }
+    }
+  }
+
+  /**
+   * パワーアップを有効化する
+   * @param {'power'|'rapid'|'shotgun'} type
+   * @param {number} duration
+   */
+  activatePowerUp(type, duration) {
+    this._powerUp      = type;
+    this._powerUpTimer = duration;
+    EventBus.emit('powerup:activated', { type, duration });
+    EventBus.emit('sound:play', { id: 'powerup' });
   }
 
   cleanup() {
@@ -217,9 +285,22 @@ export class Weapon {
   _setupXRInput() {
     for (let i = 0; i < 2; i++) {
       const controller = this.renderer.xr.getController(i);
+
+      // inputSource を取得して振動に使う
+      controller.addEventListener('connected', (e) => {
+        controller.userData.inputSource = e.data;
+      });
+      controller.addEventListener('disconnected', () => {
+        controller.userData.inputSource = null;
+        this._heldControllers.delete(controller);
+      });
+
       controller.addEventListener('selectstart', () => {
         if (!this._isActive) return;
-        this._fireFromController(controller);
+        this._heldControllers.add(controller);
+      });
+      controller.addEventListener('selectend', () => {
+        this._heldControllers.delete(controller);
       });
     }
   }
@@ -231,19 +312,31 @@ export class Weapon {
     controller.getWorldPosition(position);
     direction.applyQuaternion(controller.quaternion);
     this._spawnBullet(position, direction);
+    this._pulseHaptic(controller, 0.5, 40);
+  }
+
+  /**
+   * XRコントローラーのハプティクス振動
+   * @param {THREE.XRTargetRaySpace} controller
+   * @param {number} intensity 0〜1
+   * @param {number} durationMs ミリ秒
+   */
+  _pulseHaptic(controller, intensity = 0.5, durationMs = 40) {
+    try {
+      const actuators = controller.userData.inputSource?.gamepad?.hapticActuators;
+      if (actuators?.length > 0) actuators[0].pulse(intensity, durationMs);
+    } catch (_) { /* 対応していない端末では無視 */ }
   }
 
   // ─── デスクトップ入力 ────────────────────────────────────
 
   _setupDesktopInput() {
-    window.addEventListener('click', () => {
-      if (!this._isActive) return;
-      if (this.renderer.xr.isPresenting) return;
-      const position  = new THREE.Vector3();
-      const direction = new THREE.Vector3(0, 0, -1);
-      this.camera.getWorldPosition(position);
-      direction.applyQuaternion(this.camera.quaternion);
-      this._spawnBullet(position, direction);
+    window.addEventListener('mousedown', (e) => {
+      if (e.button !== 0 || !this._isActive || this.renderer.xr.isPresenting) return;
+      this._mouseHeld = true;
+    });
+    window.addEventListener('mouseup', (e) => {
+      if (e.button === 0) this._mouseHeld = false;
     });
 
     window.addEventListener('keydown', (e) => {
@@ -252,16 +345,24 @@ export class Weapon {
     });
   }
 
+  _fireFromCamera() {
+    if (this._cooldown > 0) return;
+    const position  = new THREE.Vector3();
+    const direction = new THREE.Vector3(0, 0, -1);
+    this.camera.getWorldPosition(position);
+    direction.applyQuaternion(this.camera.quaternion);
+    this._spawnBullet(position, direction);
+  }
+
   /**
    * XR: 右コントローラーを下に向けたままにするとリロード開始
    */
   _checkReloadTilt(delta) {
     const controller = this.renderer.xr.getController(1); // 右手
-    const quat = new THREE.Quaternion();
-    controller.getWorldQuaternion(quat);
-    const forward = new THREE.Vector3(0, 0, -1).applyQuaternion(quat);
+    controller.getWorldQuaternion(this._reloadQuat);
+    this._reloadForward.set(0, 0, -1).applyQuaternion(this._reloadQuat);
 
-    if (forward.y < TILT_THRESHOLD) {
+    if (this._reloadForward.y < TILT_THRESHOLD) {
       this._tiltTimer += delta;
       if (this._tiltTimer >= TILT_HOLD_TIME) {
         this._tiltTimer = 0;
@@ -290,13 +391,55 @@ export class Weapon {
     if (this._cooldown > 0) return;
     if (this._isReloading) return;
     if (this._ammo <= 0) {
+      EventBus.emit('sound:play', { id: 'empty' });
       this._startReload();
       return;
     }
-    this._cooldown = Config.WEAPON.COOLDOWN;
+
+    // パワーアップに応じたクールダウン・ダメージ
+    const cooldown = this._powerUp === 'rapid'
+      ? Config.POWERUP.RAPID_COOLDOWN
+      : Config.WEAPON.COOLDOWN;
+    const damage = this._powerUp === 'power'
+      ? Config.POWERUP.POWER_DAMAGE
+      : 1;
+
+    this._cooldown = cooldown;
     this._ammo--;
     this._emitAmmo();
 
+    // 弾切れになったら自動リロード
+    if (this._ammo === 0) this._startReload();
+
+    if (this._powerUp === 'shotgun') {
+      // ショットガン: 複数方向に拡散
+      const PELLETS = Config.POWERUP.SHOTGUN_PELLETS;
+      const SPREAD  = Config.POWERUP.SHOTGUN_SPREAD;
+      for (let i = 0; i < PELLETS; i++) {
+        const spreadDir = direction.clone().add(
+          new THREE.Vector3(
+            (Math.random() - 0.5) * SPREAD * 2,
+            (Math.random() - 0.5) * SPREAD,
+            (Math.random() - 0.5) * SPREAD * 2,
+          ),
+        ).normalize();
+        this._addBullet(position, spreadDir, damage);
+      }
+    } else {
+      this._addBullet(position, direction, damage);
+    }
+
+    EventBus.emit('weapon:fired', { position: position.clone(), direction: direction.clone() });
+    EventBus.emit('sound:play', { id: 'shoot' });
+  }
+
+  /**
+   * 弾を1発シーンに追加する内部ヘルパー
+   * @param {THREE.Vector3} position
+   * @param {THREE.Vector3} direction
+   * @param {number} damage
+   */
+  _addBullet(position, direction, damage = 1) {
     const mesh     = this._createBulletMesh();
     const velocity = direction.clone().normalize().multiplyScalar(Config.WEAPON.BULLET_SPEED);
     mesh.position.copy(position);
@@ -311,7 +454,6 @@ export class Weapon {
       trailGeo,
       new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9 }),
     );
-    // 同じジオメトリを共有するアウター（色違い・低opacity）
     const trailOuter = new THREE.Line(
       trailGeo,
       new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.35 }),
@@ -321,14 +463,11 @@ export class Weapon {
     this.scene.add(trail);
 
     this._bullets.push({
-      mesh, velocity,
+      mesh, velocity, damage,
       lifetime: Config.WEAPON.BULLET_LIFETIME,
       active: true,
       trail, trailPos, trailLen: 0, trailGeo,
     });
-
-    EventBus.emit('weapon:fired', { position: position.clone(), direction: direction.clone() });
-    EventBus.emit('sound:play', { id: 'shoot' });
   }
 
   /**
