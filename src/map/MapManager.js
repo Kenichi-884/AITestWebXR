@@ -31,6 +31,7 @@
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 
@@ -66,7 +67,19 @@ const MAP_CONFIG = {
 
   RAY_FAR: 40,            // レイキャストの到達距離(m)
   HIT_PAD: 0.25,          // 当たり判定の余裕(m) 小さすぎると当てにくい
+
+  MAX_PROP_TRIANGLES: 15000, // GLB1体あたりの三角形の目安。超えると警告を出す
+  GROUND_RADIUS: 16,      // 地面の半径(デスクトップ表示時のみ)
+  GROUND_TILING: 10,      // 地面のテクスチャ繰り返し回数
+  PILLAR_TILING: 2,       // 石柱のテクスチャ繰り返し回数
 };
+
+/**
+ * テクスチャの置き場所。出典とライセンスは public/assets/map/CREDITS.md に記載。
+ * NOTE: Quest のテクスチャメモリを抑えるため 512x512 に縮小してある。
+ *       差し替える場合も 512〜1024 に収めること。
+ */
+const TEX_PATH = '/assets/map/';
 
 /**
  * 効果音。SoundManager に既にあるIDを流用している。
@@ -84,7 +97,7 @@ const COLORS = {
   crystalA:  0x66e0ff,   // 水色のクリスタル
   crystalB:  0xc07bff,   // 紫のクリスタル
   circle:    0x7fd8ff,   // 魔法陣
-  stone:     0x3a3a48,   // 遺跡の石
+  stone:     0x8b93a6,   // 遺跡の石(テクスチャに乗算するので明るめの値にする)
   rune:      0x8fe3ff,   // 石柱の紋様
   gold:      0xd9a441,   // 宝箱の金具
   wood:      0x6b4423,   // 宝箱の木部
@@ -115,6 +128,13 @@ export class MapManager {
     this._time = 0;
     this._lastTick = 0;
 
+    /** デスクトップ専用の地面(ARでは passthrough を隠さないよう非表示) */
+    this._ground = null;
+    /** GLBを読むときに使い回すローダー */
+    this._gltfLoader = null;
+
+    this._textures = this._loadStoneTextures();
+
     this._build();
     this._hookRenderTick();
 
@@ -136,6 +156,9 @@ export class MapManager {
       if (typeof prev === 'function') {
         prev.call(scene, renderer, scene, camera, renderTarget);
       }
+      // ARパススルー中は地面が邪魔になるので隠す
+      if (this._ground) this._ground.visible = !renderer.xr?.isPresenting;
+
       const now = performance.now() / 1000;
       const delta = this._lastTick ? Math.min(0.1, now - this._lastTick) : 0;
       this._lastTick = now;
@@ -151,7 +174,45 @@ export class MapManager {
 
   // ── マップの構築 ─────────────────────────────────────────
 
+  /**
+   * 石材テクスチャを読み込む。
+   * NOTE: 読み込みは非同期だが、Three.js は完了時に自動で描画へ反映するため
+   *       ここでは待たずにマテリアルへ渡してよい。
+   *       ファイルが無い場合は警告だけ出して単色のまま動く。
+   */
+  _loadStoneTextures() {
+    const loader = new THREE.TextureLoader();
+    const load = (file, srgb) => {
+      const t = loader.load(
+        TEX_PATH + file,
+        undefined,
+        undefined,
+        () => console.warn(`[MapManager] テクスチャを読めませんでした: ${file} (単色で表示します)`),
+      );
+      t.wrapS = t.wrapT = THREE.RepeatWrapping;
+      if (srgb) t.colorSpace = THREE.SRGBColorSpace;
+      this._disposables.push(t);
+      return t;
+    };
+    return {
+      color: load('stone-color.jpg', true),
+      normal: load('stone-normal.jpg', false),
+      rough: load('stone-rough.jpg', false),
+    };
+  }
+
+  /** 同じテクスチャを別の繰り返し回数で使うためにクローンする */
+  _tiled(tex, repeat) {
+    const t = tex.clone();
+    t.needsUpdate = true;
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.repeat.set(repeat, repeat);
+    this._disposables.push(t);
+    return t;
+  }
+
   _build() {
+    this._buildGround();
     this._buildMagicCircle();
     this._buildCrystals();
     this._buildPillars();
@@ -161,6 +222,31 @@ export class MapManager {
     this._buildTreasureChests();
     this._buildMagicPots();
     this._buildSavePoint();
+  }
+
+  /**
+   * 地面。デスクトップだと足元が真っ暗で位置感覚が掴めないため敷く。
+   * NOTE: ARパススルー中は実際の床が見えるべきなので、XRセッション中は隠す
+   *       (可視/不可視の切り替えは _update() で renderer.xr.isPresenting を見て行う)。
+   */
+  _buildGround() {
+    const r = MAP_CONFIG.GROUND_RADIUS;
+    const geo = new THREE.CircleGeometry(r, 48);
+    const mat = new THREE.MeshStandardMaterial({
+      map: this._tiled(this._textures.color, MAP_CONFIG.GROUND_TILING),
+      normalMap: this._tiled(this._textures.normal, MAP_CONFIG.GROUND_TILING),
+      roughnessMap: this._tiled(this._textures.rough, MAP_CONFIG.GROUND_TILING),
+      color: 0x4c5468,     // 青みのある暗い石。魔法陣の光を目立たせる
+      roughness: 1.0, metalness: 0.0,
+    });
+    this._disposables.push(geo, mat);
+
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.y = MAP_CONFIG.FLOOR_Y;
+    mesh.receiveShadow = true;
+    this.root.add(mesh);
+    this._ground = mesh;
   }
 
   /**
@@ -282,9 +368,12 @@ export class MapManager {
       const a = (i / MAP_CONFIG.PILLAR_COUNT) * Math.PI * 2 + 0.35;
       const h = 1.6 + ((i * 7) % 5) * 0.55;   // 1.6〜3.8m を規則的にばらす
 
-      const geo = new THREE.CylinderGeometry(0.34, 0.42, h, 7);
+      const geo = new THREE.CylinderGeometry(0.34, 0.42, h, 10);
       const mat = new THREE.MeshStandardMaterial({
-        color: COLORS.stone, roughness: 0.9, metalness: 0.05, flatShading: true,
+        map: this._tiled(this._textures.color, MAP_CONFIG.PILLAR_TILING),
+        normalMap: this._tiled(this._textures.normal, MAP_CONFIG.PILLAR_TILING),
+        roughnessMap: this._tiled(this._textures.rough, MAP_CONFIG.PILLAR_TILING),
+        color: COLORS.stone, roughness: 1.0, metalness: 0.05,
       });
       this._disposables.push(geo, mat);
 
@@ -662,6 +751,78 @@ export class MapManager {
   // ── ユーティリティ ───────────────────────────────────────
 
   _easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+
+  /**
+   * GLBモデルを読み込んでマップに置く。
+   * Tripo3D などで生成したモデルを配置するための入口。
+   *
+   * 使い方(App.js や開発中のコンソールから):
+   *   mapManager.loadProp({ url: '/assets/map/chest.glb',
+   *                         position: [-6.2, 0, -5], fitHeight: 0.6 });
+   *
+   * NOTE: 読み込みに失敗しても null を返すだけで、既存の自前生成オブジェクトが
+   *       そのまま残る。アセットが無い状態でもゲームは壊れない。
+   *
+   * @param {object} opts
+   * @param {string} opts.url                   GLB のURL
+   * @param {[number,number,number]} [opts.position] 配置位置(yは床からの高さ)
+   * @param {number} [opts.rotationY]           Y軸の回転(ラジアン)
+   * @param {number} [opts.fitHeight]           この高さ(m)に収まるよう自動スケール
+   * @param {THREE.Object3D} [opts.replace]     読み込めたら消す既存オブジェクト
+   * @returns {Promise<THREE.Object3D|null>}
+   */
+  async loadProp({ url, position = [0, 0, 0], rotationY = 0, fitHeight = null, replace = null }) {
+    if (!this._gltfLoader) this._gltfLoader = new GLTFLoader();
+
+    let gltf;
+    try {
+      gltf = await this._gltfLoader.loadAsync(url);
+    } catch (e) {
+      console.warn(`[MapManager] GLBを読めませんでした: ${url}`, e);
+      return null;
+    }
+
+    const obj = gltf.scene;
+
+    // Quest向けの負荷チェック。重すぎる場合は落とさず警告だけ出す
+    let tris = 0;
+    obj.traverse((o) => {
+      if (!o.isMesh) return;
+      const g = o.geometry;
+      tris += g?.index ? g.index.count / 3 : (g?.attributes?.position?.count ?? 0) / 3;
+    });
+    if (tris > MAP_CONFIG.MAX_PROP_TRIANGLES) {
+      console.warn(
+        `[MapManager] ${url} は ${Math.round(tris).toLocaleString()} 三角形あります。` +
+        `Quest では1体 ${MAP_CONFIG.MAX_PROP_TRIANGLES.toLocaleString()} 以下が目安です。` +
+        'Blender のデシメートなどでポリゴン数を落とすことを検討してください。',
+      );
+    }
+
+    // 指定した高さに収まるよう自動でスケールする
+    // (生成AIのモデルはサイズがまちまちなので、そのままだと巨大/極小になりやすい)
+    if (fitHeight) {
+      const box = new THREE.Box3().setFromObject(obj);
+      const size = new THREE.Vector3();
+      box.getSize(size);
+      if (size.y > 0) obj.scale.setScalar(fitHeight / size.y);
+    }
+
+    // 足元が床に接するように置く
+    const box2 = new THREE.Box3().setFromObject(obj);
+    const [x, y, z] = position;
+    obj.position.set(x, MAP_CONFIG.FLOOR_Y + y - box2.min.y, z);
+    obj.rotation.y = rotationY;
+
+    obj.traverse((o) => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+
+    if (replace) {
+      this.root.remove(replace);
+      this._hitTargets = this._hitTargets.filter((m) => m !== replace && !replace.getObjectById?.(m.id));
+    }
+    this.root.add(obj);
+    return obj;
+  }
 
   /** マップの表示/非表示(メニュー中に隠したい場合など) */
   setVisible(visible) { this.root.visible = visible; }
