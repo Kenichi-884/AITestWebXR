@@ -23,6 +23,7 @@ import { HUD } from '../screens/HUD.js';
 import { WorldHUD } from '../screens/WorldHUD.js';
 import { MenuScreen } from '../screens/MenuScreen.js';
 import { SoundManager } from '../sounds/SoundManager.js';
+import { MapManager } from '../map/MapManager.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 
@@ -54,6 +55,9 @@ class App {
     this._sceneManager  = new SceneManager(this._renderer);
     this._soundManager  = new SoundManager();
     this._effectManager = new EffectManager(this._sceneManager.scene);
+    // フィールド(マップ)。生成後は EventBus と scene.onBeforeRender で
+    // 自走するため、ゲームループから update を呼ぶ必要はない。
+    this._mapManager    = new MapManager(this._sceneManager.scene);
     this._enemySpawner  = new EnemySpawner(this._sceneManager.scene);
     this._weapon        = new Weapon(this._sceneManager.scene, this._renderer, this._sceneManager.camera);
     this._hud      = new HUD();
