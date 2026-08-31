@@ -78,7 +78,9 @@ export class SceneManager {
 
     const dirLight = new THREE.DirectionalLight(0xffffff, Config.SCENE.DIR_LIGHT_INTENSITY);
     dirLight.position.set(3, 5, 3);
-    dirLight.castShadow = true;
+    // WebXR(Quest)ではシャドウマップの計算コストが高いため無効化
+    // 影なしでもAmbientLight + HemisphereLight で十分な品質が得られる
+    dirLight.castShadow = false;
     this.scene.add(dirLight);
 
     const accentLight = new THREE.PointLight(0x0044ff, 0.3, 10);
@@ -260,7 +262,7 @@ export class SceneManager {
         model = await new Promise((resolve, reject) =>
           loader.load(path, resolve, undefined, reject),
         );
-        this._applyFbxMaterials(model, weaponConfig.texturesPath);
+        await this._applyFbxMaterials(model, weaponConfig.texturesPath);
       } else {
         model = (await loader.loadAsync(path)).scene;
       }
@@ -287,7 +289,7 @@ export class SceneManager {
    *   - roughness / metalness で物理ベースのリアルな質感が出る
    *   - MeshPhongMaterial より照明の計算が正確
    */
-  _applyFbxMaterials(model, texturesPath) {
+  async _applyFbxMaterials(model, texturesPath) {
     const texLoader = new THREE.TextureLoader();
 
     const load = (file, colorSpace = false) => new Promise((resolve) => {
@@ -305,7 +307,18 @@ export class SceneManager {
       );
     });
 
-    model.traverse(async (child) => {
+    // テクスチャを一括ロードして全メッシュで共有する（重複ロードを防ぐ）
+    const [blackDiffuse, darkDiffuse, whiteDiffuse, normal, metallic, emission] =
+      await Promise.all([
+        load('pistol-black-diffuse.png', true),
+        load('pistol-dark-diffuse.png', true),
+        load('pistol-white-diffuse.png', true),
+        load('pistol-normal.png'),
+        load('pistol-metallic.png'),
+        load('pistol-emission.png', true),
+      ]);
+
+    model.traverse((child) => {
       if (!child.isMesh) return;
 
       const oldMat = Array.isArray(child.material) ? child.material[0] : child.material;
@@ -324,22 +337,15 @@ export class SceneManager {
       child.castShadow = true;
       child.receiveShadow = true;
 
-      // Diffuse: マテリアル名で色バリエーションを判定
-      let diffuseFile = 'pistol-black-diffuse.png';
-      if (matName.includes('dark'))  diffuseFile = 'pistol-dark-diffuse.png';
-      if (matName.includes('white')) diffuseFile = 'pistol-white-diffuse.png';
+      // Diffuse: マテリアル名で色バリエーションを判定（共有テクスチャを使う）
+      let diffuse = blackDiffuse;
+      if (matName.includes('dark'))  diffuse = darkDiffuse;
+      if (matName.includes('white')) diffuse = whiteDiffuse;
 
-      const [diffuse, normal, metallic, emission] = await Promise.all([
-        load(diffuseFile, true),
-        load('pistol-normal.png'),
-        load('pistol-metallic.png'),
-        load('pistol-emission.png', true),
-      ]);
-
-      if (diffuse)  { stdMat.map = diffuse; }
-      if (normal)   { stdMat.normalMap = normal; stdMat.normalScale.set(1.2, 1.2); }
-      if (metallic) { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
-      if (emission) { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
+      if (diffuse)   { stdMat.map = diffuse; }
+      if (normal)    { stdMat.normalMap = normal; stdMat.normalScale.set(1.2, 1.2); }
+      if (metallic)  { stdMat.metalnessMap = metallic; stdMat.roughnessMap = metallic; }
+      if (emission)  { stdMat.emissiveMap = emission; stdMat.emissive = new THREE.Color(0x111111); }
 
       stdMat.needsUpdate = true;
     });

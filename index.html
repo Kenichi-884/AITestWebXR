@@ -3,13 +3,36 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>MR Shooter - WebXR</title>
+  <title>MR SHOOTER — WebXR</title>
   <style>
+    /* ── 変数 ─────────────────────────────────────────────────── */
+    :root {
+      --bg:        #050510;
+      --cyan:      #00e5ff;
+      --orange:    #ff6b35;
+      --danger:    #ff2d55;
+      --warn:      #ffd60a;
+      --green:     #30d158;
+      --text:      #e8f4f8;
+      --dim:       #5a7a8a;
+      --glass:     rgba(8, 20, 40, 0.72);
+      --glass-bd:  rgba(0, 229, 255, 0.18);
+      --glow-cyan: 0 0 12px rgba(0,229,255,0.6);
+      --glow-red:  0 0 12px rgba(255,45,85,0.7);
+      --font:      'Segoe UI', 'Helvetica Neue', sans-serif;
+      --mono:      'Consolas', 'Courier New', monospace;
+    }
+
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body { background: #000; overflow: hidden; font-family: 'Segoe UI', sans-serif; }
+    body {
+      background: var(--bg);
+      overflow: hidden;
+      font-family: var(--font);
+      color: var(--text);
+    }
     canvas { display: block; }
 
-    /* DOM Overlay: Meta QuestブラウザのAR上に重ねて表示されるUI層 */
+    /* ── オーバーレイ ─────────────────────────────────────────── */
     #overlay {
       position: fixed;
       inset: 0;
@@ -17,7 +40,17 @@
       z-index: 10;
     }
 
-    /* ===== メニュー画面 (担当: 営業/総務メンバー) ===== */
+    /* ── ユーティリティ ───────────────────────────────────────── */
+    .glow-text-cyan {
+      text-shadow: 0 0 8px var(--cyan), 0 0 20px rgba(0,229,255,0.4);
+    }
+    .glow-text-red {
+      text-shadow: 0 0 8px var(--danger), 0 0 24px rgba(255,45,85,0.5);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       メニュー画面
+    ═══════════════════════════════════════════════════════════ */
     #menu-screen {
       position: absolute;
       inset: 0;
@@ -25,127 +58,559 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(0, 0, 0, 0.75);
-      color: #fff;
       pointer-events: all;
-    }
-    #menu-screen h1 {
-      font-size: 2.5rem;
-      margin-bottom: 0.5rem;
-      letter-spacing: 0.1em;
-    }
-    #menu-screen p.subtitle {
-      font-size: 1rem;
-      color: #aaa;
-      margin-bottom: 2rem;
-    }
-    .btn {
-      padding: 0.9rem 2.5rem;
-      font-size: 1.2rem;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: bold;
-      transition: transform 0.1s, opacity 0.1s;
-    }
-    .btn:active { transform: scale(0.96); opacity: 0.85; }
-    .btn-primary { background: #e74c3c; color: #fff; }
-    .btn-secondary { background: #555; color: #fff; margin-top: 1rem; }
-    #xr-not-supported {
-      display: none;
-      color: #f00;
-      margin-top: 1rem;
-      font-size: 0.9rem;
+      overflow: hidden;
     }
 
-    /* ===== HUD (担当: 営業/総務メンバー) ===== */
+    /* グリッドアニメーション背景 */
+    #menu-screen::before {
+      content: '';
+      position: absolute;
+      inset: -60px;
+      background-image:
+        linear-gradient(rgba(0,229,255,0.07) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(0,229,255,0.07) 1px, transparent 1px);
+      background-size: 48px 48px;
+      animation: gridScroll 12s linear infinite;
+      pointer-events: none;
+    }
+    @keyframes gridScroll {
+      from { transform: translateY(0); }
+      to   { transform: translateY(48px); }
+    }
+    /* 中央からのラジアルグラデーション */
+    #menu-screen::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse 70% 60% at 50% 50%,
+        rgba(0,20,50,0.0) 0%,
+        rgba(5,5,16,0.85) 100%);
+      pointer-events: none;
+    }
+
+    /* コンテンツ */
+    .menu-content {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 2rem;
+    }
+
+    /* タイトルロゴ */
+    .menu-logo {
+      text-align: center;
+      line-height: 1;
+    }
+    .menu-logo-eyebrow {
+      font-size: 0.7rem;
+      letter-spacing: 0.4em;
+      color: var(--cyan);
+      margin-bottom: 0.5rem;
+      font-family: var(--mono);
+    }
+    .menu-logo h1 {
+      font-size: clamp(2.8rem, 7vw, 5rem);
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      color: #fff;
+      text-shadow:
+        0 0 20px rgba(0,229,255,0.5),
+        0 0 60px rgba(0,229,255,0.2),
+        0 2px 4px rgba(0,0,0,0.9);
+    }
+    .menu-logo-sub {
+      font-size: 0.75rem;
+      letter-spacing: 0.25em;
+      color: var(--dim);
+      margin-top: 0.6rem;
+      font-family: var(--mono);
+    }
+
+    /* ボタン */
+    .menu-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.8rem;
+      width: 280px;
+    }
+    .btn {
+      position: relative;
+      padding: 0.85rem 2rem;
+      font-size: 0.95rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.6rem;
+      transition: transform 0.12s, box-shadow 0.12s, opacity 0.12s;
+      font-family: var(--font);
+      text-transform: uppercase;
+    }
+    .btn:active { transform: scale(0.96); }
+
+    .btn-xr {
+      background: linear-gradient(135deg, #0066cc, #0099ff);
+      color: #fff;
+      box-shadow: 0 0 24px rgba(0,153,255,0.35), 0 2px 8px rgba(0,0,0,0.5);
+      border: 1px solid rgba(0,229,255,0.4);
+    }
+    .btn-xr:hover { box-shadow: 0 0 36px rgba(0,229,255,0.55), 0 2px 8px rgba(0,0,0,0.5); }
+    .btn-xr:disabled { opacity: 0.35; cursor: not-allowed; pointer-events: none; }
+
+    .btn-desktop {
+      background: var(--glass);
+      color: var(--text);
+      border: 1px solid var(--glass-bd);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    }
+    .btn-desktop:hover {
+      background: rgba(0,229,255,0.08);
+      border-color: rgba(0,229,255,0.4);
+    }
+
+    .btn-icon {
+      font-size: 1.1em;
+      opacity: 0.8;
+    }
+
+    #xr-not-supported {
+      display: none;
+      color: var(--danger);
+      font-size: 0.78rem;
+      font-family: var(--mono);
+      letter-spacing: 0.05em;
+      text-align: center;
+    }
+
+    /* 遊び方 */
+    #how-to-play {
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 8px;
+      padding: 1rem 1.4rem;
+      width: 280px;
+    }
+    .how-to-title {
+      font-size: 0.65rem;
+      letter-spacing: 0.3em;
+      color: var(--cyan);
+      font-family: var(--mono);
+      margin-bottom: 0.7rem;
+      font-weight: bold;
+    }
+    .how-to-item {
+      display: flex;
+      align-items: center;
+      gap: 0.7rem;
+      font-size: 0.82rem;
+      color: #a0b8c4;
+      padding: 0.22rem 0;
+      line-height: 1.4;
+    }
+    .how-icon {
+      font-size: 1rem;
+      color: var(--cyan);
+      width: 1.2em;
+      text-align: center;
+      flex-shrink: 0;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       HUD
+    ═══════════════════════════════════════════════════════════ */
     #hud {
       position: absolute;
       inset: 0;
       display: none;
       pointer-events: none;
     }
+
+    /* スコア (上中央) */
     #score-display {
       position: absolute;
-      top: 30px;
+      top: 36px;
       left: 50%;
       transform: translateX(-50%);
-      font-size: 2rem;
-      color: #fff;
-      text-shadow: 0 0 10px rgba(0,0,0,0.8);
-      font-weight: bold;
+      text-align: center;
+      pointer-events: none;
     }
+    #score-label {
+      font-size: 0.6rem;
+      letter-spacing: 0.3em;
+      color: var(--dim);
+      font-family: var(--mono);
+      display: block;
+      margin-bottom: 2px;
+    }
+    #score-value {
+      font-size: 2rem;
+      font-family: var(--mono);
+      font-weight: 700;
+      color: #fff;
+      text-shadow: 0 0 10px rgba(255,255,255,0.3);
+      display: inline-block;
+    }
+    #score-value.score-pop {
+      animation: scorePop 0.3s ease-out;
+    }
+    @keyframes scorePop {
+      0%   { transform: scale(1.45); color: var(--warn); text-shadow: 0 0 16px var(--warn); }
+      100% { transform: scale(1);    color: #fff;        text-shadow: 0 0 10px rgba(255,255,255,0.3); }
+    }
+    .score-popup {
+      position: absolute;
+      top: -4px;
+      left: 50%;
+      transform: translateX(-50%);
+      color: var(--warn);
+      font-size: 1rem;
+      font-weight: 700;
+      font-family: var(--mono);
+      text-shadow: 0 0 8px var(--warn);
+      animation: scorePopupRise 0.85s ease-out forwards;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    @keyframes scorePopupRise {
+      0%   { opacity: 1; transform: translate(-50%, 0);     }
+      100% { opacity: 0; transform: translate(-50%, -32px); }
+    }
+
+    /* コンボ (スコア右横) */
+    #combo-display {
+      position: absolute;
+      top: 38px;
+      left: calc(50% + 120px);
+      transform-origin: left center;
+      transform: scale(0.7);
+      color: var(--orange);
+      font-family: var(--mono);
+      font-size: 1rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-shadow: 0 0 10px var(--orange);
+      opacity: 0;
+      transition: opacity 0.15s, transform 0.15s;
+    }
+    #combo-display.combo-active {
+      opacity: 1;
+      transform: scale(1);
+    }
+
+    /* ウェーブ (上左) */
+    #wave-display {
+      position: absolute;
+      top: 36px;
+      left: 36px;
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 6px;
+      padding: 0.35rem 0.7rem;
+      font-family: var(--mono);
+    }
+    #wave-label-text {
+      font-size: 0.58rem;
+      letter-spacing: 0.25em;
+      color: var(--dim);
+      display: block;
+    }
+    #wave-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--cyan);
+      text-shadow: var(--glow-cyan);
+      line-height: 1.1;
+    }
+
+    /* HP (下左・グラスパネル付き) */
     #health-bar-wrap {
       position: absolute;
-      bottom: 60px;
-      left: 50%;
-      transform: translateX(-50%);
+      bottom: 48px;
+      left: 24px;
       display: flex;
-      align-items: center;
-      gap: 10px;
+      flex-direction: column;
+      gap: 5px;
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 10px;
+      padding: 8px 12px 10px;
     }
-    #health-label { color: #fff; font-size: 0.9rem; }
+    .hp-header {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+    }
+    #health-label {
+      font-size: 0.58rem;
+      letter-spacing: 0.28em;
+      color: var(--dim);
+      font-family: var(--mono);
+    }
+    #health-percent {
+      font-size: 1rem;
+      font-family: var(--mono);
+      color: var(--green);
+      font-weight: 800;
+      text-shadow: 0 0 8px rgba(48,209,88,0.6);
+    }
     #health-bar-bg {
       width: 200px;
-      height: 14px;
-      background: rgba(255,255,255,0.2);
-      border-radius: 7px;
+      height: 10px;
+      background: rgba(255,255,255,0.08);
+      border-radius: 5px;
       overflow: hidden;
+      border: 1px solid rgba(255,255,255,0.06);
+      position: relative;
     }
     #health-bar {
       height: 100%;
       width: 100%;
-      background: #2ecc71;
-      border-radius: 7px;
-      transition: width 0.3s, background 0.3s;
+      background: var(--green);
+      border-radius: 5px;
+      transition: width 0.3s ease, background 0.4s ease;
+      box-shadow: 0 0 8px currentColor;
     }
-    #wave-display {
+    /* HPセグメント区切り */
+    #health-bar-bg::after {
+      content: '';
       position: absolute;
-      top: 80px;
-      left: 50%;
-      transform: translateX(-50%);
-      color: #f39c12;
-      font-size: 1rem;
-      font-weight: bold;
+      inset: 0;
+      background: repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent calc(25% - 1px),
+        rgba(0,0,0,0.4) calc(25% - 1px),
+        rgba(0,0,0,0.4) 25%
+      );
+      border-radius: 5px;
     }
+
+    /* 弾数 (下右・グラスパネル付き) */
     #ammo-display {
-      position: fixed;
-      bottom: 110px;
-      left: 40px;
-      color: #fff;
-      font-size: 1.4rem;
-      font-weight: bold;
-      letter-spacing: 0.05em;
-      text-shadow: 0 2px 6px rgba(0,0,0,1);
-      z-index: 20;
+      position: absolute;
+      bottom: 48px;
+      right: 24px;
+      text-align: right;
       pointer-events: none;
+      z-index: 20;
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 10px;
+      padding: 8px 12px 10px;
     }
     #ammo-label {
-      font-size: 0.7rem;
-      color: #ccc;
+      font-size: 0.58rem;
+      letter-spacing: 0.28em;
+      color: var(--dim);
+      font-family: var(--mono);
       display: block;
-      margin-bottom: 2px;
-      letter-spacing: 0.12em;
+      margin-bottom: 5px;
     }
+    #ammo-dots {
+      display: flex;
+      justify-content: flex-end;
+      gap: 4px;
+      margin-bottom: 5px;
+      flex-wrap: wrap;
+      max-width: 120px;
+    }
+    .ammo-dot {
+      width: 8px;
+      height: 18px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.12);
+      border: 1px solid rgba(255,255,255,0.08);
+      transition: background 0.12s, box-shadow 0.12s;
+    }
+    .ammo-dot.loaded {
+      background: var(--warn);
+      border-color: rgba(255,214,10,0.6);
+      box-shadow: 0 0 6px rgba(255,214,10,0.7);
+    }
+    #ammo-value {
+      font-size: 2rem;
+      font-family: var(--mono);
+      font-weight: 800;
+      color: var(--warn);
+      text-shadow: 0 0 10px rgba(255,214,10,0.5);
+      line-height: 1;
+      display: block;
+    }
+
+    /* リロード */
     #reload-indicator {
       display: none;
-      position: fixed;
-      bottom: 82px;
-      left: 40px;
-      color: #f39c12;
-      font-size: 1rem;
-      font-weight: bold;
-      letter-spacing: 0.08em;
+      position: absolute;
+      bottom: 48px;
+      right: 24px;
+      text-align: right;
+      color: var(--warn);
+      font-size: 0.9rem;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      font-family: var(--mono);
       z-index: 20;
       pointer-events: none;
+      background: var(--glass);
+      border: 1px solid rgba(255,214,10,0.3);
+      border-radius: 10px;
+      padding: 8px 14px;
       animation: reloadPulse 0.5s ease-in-out infinite alternate;
     }
     @keyframes reloadPulse {
-      from { opacity: 0.4; }
+      from { opacity: 0.3; }
       to   { opacity: 1.0; }
     }
 
-    /* ===== リザルト画面 (担当: 営業/総務メンバー) ===== */
+    /* ═══════════════════════════════════════════════════════════
+       照準 (クロスヘア)
+    ═══════════════════════════════════════════════════════════ */
+    #crosshair {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      width: 44px;
+      height: 44px;
+      display: none;
+      pointer-events: none;
+    }
+    .ch-line {
+      position: absolute;
+      background: rgba(255,255,255,0.88);
+      transition: top 0.08s ease-out, bottom 0.08s ease-out,
+                  left 0.08s ease-out, right 0.08s ease-out,
+                  background 0.1s, box-shadow 0.1s;
+      box-shadow: 0 0 3px rgba(0,0,0,0.8);
+    }
+    /* 射撃時クロスヘアが広がるスプレッド演出 */
+    #crosshair.ch-fired .ch-top    { top: -7px; }
+    #crosshair.ch-fired .ch-bottom { bottom: -7px; }
+    #crosshair.ch-fired .ch-left   { left: -7px; }
+    #crosshair.ch-fired .ch-right  { right: -7px; }
+    /* 縦線 */
+    .ch-top, .ch-bottom {
+      width: 2px;
+      height: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+    }
+    .ch-top    { top: 0; }
+    .ch-bottom { bottom: 0; }
+    /* 横線 */
+    .ch-left, .ch-right {
+      height: 2px;
+      width: 10px;
+      top: 50%;
+      transform: translateY(-50%);
+    }
+    .ch-left  { left: 0; }
+    .ch-right { right: 0; }
+    /* 中心ドット */
+    .ch-dot {
+      position: absolute;
+      width: 3px;
+      height: 3px;
+      background: rgba(255,255,255,0.9);
+      border-radius: 50%;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 0 3px rgba(0,0,0,0.8);
+      transition: background 0.1s;
+    }
+
+    /* ヒットマーカー */
+    #crosshair.hit-flash .ch-line,
+    #crosshair.hit-flash .ch-dot {
+      background: var(--danger);
+      box-shadow: 0 0 6px var(--danger);
+    }
+    #crosshair.hit-flash {
+      animation: hitMarkerPulse 0.25s ease-out;
+    }
+    @keyframes hitMarkerPulse {
+      0%   { transform: translate(-50%, -50%) scale(1.6); }
+      100% { transform: translate(-50%, -50%) scale(1); }
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       ウェーブバナー
+    ═══════════════════════════════════════════════════════════ */
+    .wave-banner-line {
+      width: 240px;
+      height: 1px;
+      margin: 10px auto;
+      background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+    }
+    .wave-banner-text {
+      font-size: 3.2rem;
+      font-weight: 900;
+      color: var(--cyan);
+      letter-spacing: 0.2em;
+      font-family: var(--mono);
+      text-shadow: 0 0 20px var(--cyan), 0 0 50px rgba(0,229,255,0.4);
+    }
+    .wave-banner-sub {
+      font-size: 0.75rem;
+      color: var(--dim);
+      letter-spacing: 0.5em;
+      margin-top: 6px;
+      font-family: var(--mono);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       被弾フラッシュ
+    ═══════════════════════════════════════════════════════════ */
+    #damage-flash {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center,
+        rgba(255,0,0,0) 30%,
+        rgba(220,0,0,0.6) 100%);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 15;
+    }
+    #damage-flash.damage-flash-active {
+      animation: damageFlash 0.45s ease-out;
+    }
+    @keyframes damageFlash {
+      0%   { opacity: 1; }
+      100% { opacity: 0; }
+    }
+
+    /* 低HP時の持続ビネット (HP 30%以下で点滅) */
+    #low-hp-vignette {
+      position: absolute;
+      inset: 0;
+      background: radial-gradient(ellipse at center,
+        rgba(180,0,0,0) 35%,
+        rgba(180,0,0,0.65) 100%);
+      opacity: 0;
+      pointer-events: none;
+      z-index: 14;
+      transition: opacity 0.6s ease;
+    }
+    #low-hp-vignette.active {
+      opacity: 1;
+      animation: lowHpPulse 1.3s ease-in-out infinite;
+    }
+    @keyframes lowHpPulse {
+      0%, 100% { opacity: 0.35; }
+      50%       { opacity: 0.75; }
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       リザルト画面
+    ═══════════════════════════════════════════════════════════ */
     #result-screen {
       position: absolute;
       inset: 0;
@@ -153,74 +618,414 @@
       flex-direction: column;
       align-items: center;
       justify-content: center;
-      background: rgba(0, 0, 0, 0.8);
-      color: #fff;
+      background: rgba(0,0,0,0.85);
+      backdrop-filter: blur(6px);
       pointer-events: all;
+      gap: 0;
     }
-    #result-screen h2 { font-size: 2rem; margin-bottom: 0.5rem; }
-    #result-score { font-size: 3rem; color: #f1c40f; margin: 1rem 0; font-weight: bold; }
-    #result-wave { color: #aaa; margin-bottom: 2rem; }
+    #result-screen.show-anim {
+      animation: resultFadeIn 0.5s ease-out;
+    }
+    @keyframes resultFadeIn {
+      0%   { opacity: 0; transform: scale(0.92); }
+      100% { opacity: 1; transform: scale(1); }
+    }
 
-    /* ===== 照準 ===== */
-    #crosshair {
+    .result-eyebrow {
+      font-size: 0.65rem;
+      letter-spacing: 0.45em;
+      color: var(--dim);
+      font-family: var(--mono);
+      margin-bottom: 0.4rem;
+    }
+    #result-screen h2 {
+      font-size: 3rem;
+      font-weight: 900;
+      color: var(--danger);
+      letter-spacing: 0.12em;
+      text-shadow: 0 0 24px rgba(255,45,85,0.6);
+      line-height: 1;
+      margin-bottom: 1.8rem;
+    }
+
+    .result-stat-block {
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 10px;
+      padding: 1.4rem 2.4rem;
+      text-align: center;
+      margin-bottom: 0.6rem;
+      min-width: 240px;
+    }
+    .result-stat-label {
+      font-size: 0.62rem;
+      letter-spacing: 0.3em;
+      color: var(--dim);
+      font-family: var(--mono);
+      display: block;
+      margin-bottom: 4px;
+    }
+    #result-score {
+      font-size: 3.2rem;
+      font-weight: 900;
+      color: var(--warn);
+      font-family: var(--mono);
+      text-shadow: 0 0 16px rgba(255,214,10,0.5);
+      display: block;
+    }
+    #result-wave {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 8px;
+      padding: 0.7rem 2.4rem;
+      margin-bottom: 1.8rem;
+      min-width: 240px;
+      font-family: var(--mono);
+    }
+    .result-wave-label {
+      font-size: 0.62rem;
+      letter-spacing: 0.25em;
+      color: var(--dim);
+    }
+    #result-wave-value {
+      font-size: 1.4rem;
+      font-weight: 700;
+      color: var(--cyan);
+      text-shadow: var(--glow-cyan);
+    }
+
+    .result-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 0.7rem;
+      width: 240px;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, #cc2233, #ff2d55);
+      color: #fff;
+      box-shadow: 0 0 20px rgba(255,45,85,0.35), 0 2px 6px rgba(0,0,0,0.5);
+      border: 1px solid rgba(255,45,85,0.4);
+    }
+    .btn-primary:hover {
+      box-shadow: 0 0 32px rgba(255,45,85,0.55), 0 2px 6px rgba(0,0,0,0.5);
+    }
+    .btn-secondary {
+      background: var(--glass);
+      color: var(--text);
+      border: 1px solid var(--glass-bd);
+    }
+    .btn-secondary:hover {
+      background: rgba(0,229,255,0.08);
+      border-color: rgba(0,229,255,0.4);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       コンボ倍率テキスト
+    ═══════════════════════════════════════════════════════════ */
+    #combo-mult {
+      font-size: 0.78em;
+      color: var(--warn);
+      text-shadow: 0 0 8px var(--warn);
+      margin-left: 4px;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       カメラシェイク
+    ═══════════════════════════════════════════════════════════ */
+    @keyframes shakeAnim {
+      0%, 100% { transform: translate(0, 0) rotate(0deg); }
+      20%  { transform: translate(-4px,  3px) rotate(-0.4deg); }
+      40%  { transform: translate( 4px, -3px) rotate( 0.4deg); }
+      60%  { transform: translate(-3px,  4px) rotate(-0.25deg); }
+      80%  { transform: translate( 3px, -2px) rotate( 0.25deg); }
+    }
+    .shake-sm { animation: shakeAnim 0.15s ease-out; }
+    .shake-lg { animation: shakeAnim 0.28s ease-out; }
+
+    /* ═══════════════════════════════════════════════════════════
+       残弾警告点滅 (3発以下)
+    ═══════════════════════════════════════════════════════════ */
+    @keyframes ammoWarn {
+      0%, 100% { opacity: 1; }
+      50%  { opacity: 0.2; }
+    }
+    .ammo-critical #ammo-dots .ammo-dot.loaded {
+      animation: ammoWarn 0.4s ease-in-out infinite;
+      background: var(--danger) !important;
+      border-color: rgba(255,45,85,0.5) !important;
+      box-shadow: 0 0 6px rgba(255,45,85,0.8) !important;
+    }
+    .ammo-critical #ammo-value {
+      animation: ammoWarn 0.4s ease-in-out infinite;
+      color: var(--danger) !important;
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       キルストリークアナウンス
+    ═══════════════════════════════════════════════════════════ */
+    @keyframes killstreakRise {
+      0%   { opacity: 0; transform: translate(-50%, 0)    scale(0.5); }
+      15%  { opacity: 1; transform: translate(-50%, -14px) scale(1.15); }
+      80%  { opacity: 1; transform: translate(-50%, -22px) scale(1); }
+      100% { opacity: 0; transform: translate(-50%, -32px) scale(0.95); }
+    }
+    .killstreak-popup {
       position: absolute;
-      top: 50%;
+      top: 34%;
       left: 50%;
-      transform: translate(-50%, -50%);
-      width: 20px;
-      height: 20px;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+      z-index: 90;
+      animation: killstreakRise 1.9s ease-out forwards;
+    }
+    .ks-text {
+      display: block;
+      font-size: 1.7rem;
+      font-weight: 900;
+      letter-spacing: 0.18em;
+      font-family: var(--mono);
+      color: var(--warn);
+      text-shadow: 0 0 20px var(--warn), 0 0 50px rgba(255,214,10,0.4);
+    }
+    .ks-mult {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--orange);
+      letter-spacing: 0.12em;
+      font-family: var(--mono);
+      margin-top: 4px;
+      text-shadow: 0 0 8px var(--orange);
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       パワーアップ表示 (下中央)
+    ═══════════════════════════════════════════════════════════ */
+    #powerup-display {
       display: none;
-    }
-    #crosshair::before, #crosshair::after {
-      content: '';
       position: absolute;
-      background: rgba(255,255,255,0.8);
+      bottom: 56px;
+      left: 50%;
+      transform: translateX(-50%);
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      pointer-events: none;
+      z-index: 30;
+      min-width: 160px;
     }
-    #crosshair::before { width: 2px; height: 100%; left: 50%; transform: translateX(-50%); }
-    #crosshair::after  { width: 100%; height: 2px; top: 50%; transform: translateY(-50%); }
+    #powerup-label {
+      font-size: 1.05rem;
+      font-weight: 900;
+      font-family: var(--mono);
+      letter-spacing: 0.15em;
+      padding: 4px 14px;
+      border-radius: 4px;
+      background: rgba(0,0,0,0.55);
+      animation: puLabelPulse 0.6s ease-out;
+    }
+    @keyframes puLabelPulse {
+      0%   { transform: scale(1.4); }
+      100% { transform: scale(1); }
+    }
+    /* タイプ別カラー */
+    .pu-power   #powerup-label { color: #ff4422; text-shadow: 0 0 14px #ff4422; border: 1px solid rgba(255,68,34,0.5); }
+    .pu-rapid   #powerup-label { color: #00ffcc; text-shadow: 0 0 14px #00ffcc; border: 1px solid rgba(0,255,204,0.5); }
+    .pu-shotgun #powerup-label { color: var(--warn); text-shadow: 0 0 14px var(--warn); border: 1px solid rgba(255,214,10,0.5); }
+
+    /* タイマーバー */
+    #powerup-bar-bg {
+      width: 140px;
+      height: 4px;
+      background: rgba(255,255,255,0.12);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    #powerup-bar {
+      height: 100%;
+      width: 100%;
+      border-radius: 2px;
+      transform-origin: left center;
+    }
+    .pu-power   #powerup-bar { background: #ff4422; box-shadow: 0 0 6px #ff4422; }
+    .pu-rapid   #powerup-bar { background: #00ffcc; box-shadow: 0 0 6px #00ffcc; }
+    .pu-shotgun #powerup-bar { background: var(--warn); box-shadow: 0 0 6px var(--warn); }
+    #powerup-bar.pu-bar-run {
+      animation: puBarShrink linear forwards;
+    }
+    @keyframes puBarShrink {
+      from { transform: scaleX(1); }
+      to   { transform: scaleX(0); }
+    }
+
+    /* ═══════════════════════════════════════════════════════════
+       ポストエフェクト (CSS・GPU負荷ゼロ)
+    ═══════════════════════════════════════════════════════════ */
+
+    /* 常時ビネット: 画面四隅を暗くして没入感を高める */
+    #overlay::before {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: radial-gradient(ellipse 90% 80% at 50% 50%,
+        transparent 55%,
+        rgba(0, 0, 0, 0.45) 100%);
+      pointer-events: none;
+      z-index: 1;
+    }
+
+    /* スキャンライン: 微妙なCRTテクスチャで没入感UP */
+    #overlay::after {
+      content: '';
+      position: fixed;
+      inset: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 3px,
+        rgba(0, 0, 0, 0.04) 3px,
+        rgba(0, 0, 0, 0.04) 4px
+      );
+      pointer-events: none;
+      z-index: 2;
+    }
   </style>
 </head>
 <body>
   <canvas id="canvas"></canvas>
 
-  <!-- DOM Overlay root: AR中もこのdivの中身がオーバーレイ表示される -->
+  <!-- DOM Overlay root -->
   <div id="overlay">
 
-    <!-- メニュー画面 -->
+    <!-- ── メニュー画面 ───────────────────────────── -->
     <div id="menu-screen">
-      <h1>シューティング</h1>
-      <button class="btn btn-primary" id="btn-start-xr">ヘッドセットで開始</button>
-      <button class="btn btn-secondary" id="btn-start-desktop">デスクトップで試す</button>
-      <p id="xr-not-supported">このデバイスはWebXR ARをサポートしていません</p>
+      <div class="menu-content">
+        <div class="menu-logo">
+          <div class="menu-logo-eyebrow">MIXED REALITY</div>
+          <h1 class="glow-text-cyan">MR SHOOTER</h1>
+          <div class="menu-logo-sub">WAVE DEFENSE · WEBXR</div>
+        </div>
+
+        <div class="menu-buttons">
+          <button class="btn btn-xr" id="btn-start-xr">
+            <span class="btn-icon">◎</span>
+            START AR
+          </button>
+        </div>
+        <!-- デスクトップモードボタン(非表示 / 開発時は display:block に戻す) -->
+        <button class="btn btn-desktop" id="btn-start-desktop" style="display:none"></button>
+
+        <p id="xr-not-supported">WebXR AR not supported on this device</p>
+
+        <div id="how-to-play">
+          <p class="how-to-title">HOW TO PLAY</p>
+          <div class="how-to-item">
+            <span class="how-icon">◎</span>
+            AIM — コントローラーを向ける
+          </div>
+          <div class="how-to-item">
+            <span class="how-icon">◉</span>
+            SHOOT — トリガーを引く
+          </div>
+          <div class="how-to-item">
+            <span class="how-icon">↺</span>
+            RELOAD — 右手を下に向けてキープ
+          </div>
+          <div class="how-to-item">
+            <span class="how-icon">◆</span>
+            ITEM — 落ちたオーブを撃って取得
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- 弾数UI: #hud の外に出して常にDOMに存在させる。表示制御はHUD.jsで行う -->
+    <!-- ── 弾数 UI ──────────────────────────────── -->
     <div id="ammo-display" style="display:none">
       <span id="ammo-label">AMMO</span>
-      <span id="ammo-value">12 / 12</span>
+      <div id="ammo-dots"></div>
+      <span id="ammo-value">12</span>
     </div>
-    <div id="reload-indicator">↺ RELOADING...</div>
+    <div id="reload-indicator">↺ RELOADING</div>
 
-    <!-- HUD -->
+    <!-- ── 被弾フラッシュ ────────────────────────── -->
+    <div id="damage-flash"></div>
+    <!-- ── 低HP持続ビネット ──────────────────────── -->
+    <div id="low-hp-vignette"></div>
+    <!-- ── パワーアップ表示 ──────────────────────── -->
+    <div id="powerup-display">
+      <span id="powerup-label">POWER ×5</span>
+      <div id="powerup-bar-bg">
+        <div id="powerup-bar"></div>
+      </div>
+    </div>
+
+    <!-- ── HUD ──────────────────────────────────── -->
     <div id="hud">
-      <div id="score-display">SCORE: <span id="score-value">0</span></div>
-      <div id="wave-display">WAVE <span id="wave-value">1</span></div>
+      <!-- スコア (上中央) -->
+      <div id="score-display">
+        <span id="score-label">SCORE</span>
+        <span id="score-value">0</span>
+      </div>
+
+      <!-- コンボ (スコア右) -->
+      <div id="combo-display">
+        <span id="combo-value">2</span> COMBO
+        <span id="combo-mult"></span>
+      </div>
+
+      <!-- ウェーブ (上左) -->
+      <div id="wave-display">
+        <span id="wave-label-text">WAVE</span>
+        <span id="wave-value">1</span>
+      </div>
+
+      <!-- HP (下左) -->
       <div id="health-bar-wrap">
-        <span id="health-label">HP</span>
+        <div class="hp-header">
+          <span id="health-label">HP</span>
+          <span id="health-percent">100%</span>
+        </div>
         <div id="health-bar-bg">
           <div id="health-bar"></div>
         </div>
       </div>
-      <div id="crosshair"></div>
+
+      <!-- 照準 (中央) -->
+      <div id="crosshair">
+        <div class="ch-line ch-top"></div>
+        <div class="ch-line ch-right"></div>
+        <div class="ch-line ch-bottom"></div>
+        <div class="ch-line ch-left"></div>
+        <div class="ch-dot"></div>
+      </div>
     </div>
 
-    <!-- リザルト画面 -->
+    <!-- ── リザルト画面 ──────────────────────────── -->
     <div id="result-screen">
-      <h2>GAME OVER</h2>
-      <div id="result-score">0</div>
-      <div id="result-wave">WAVE <span id="result-wave-value">1</span> まで到達</div>
-      <button class="btn btn-primary" id="btn-restart">もう一度</button>
-      <button class="btn btn-secondary" id="btn-to-menu">メニューへ</button>
+      <div class="result-eyebrow">SESSION ENDED</div>
+      <h2 class="glow-text-red">GAME OVER</h2>
+
+      <div class="result-stat-block">
+        <span class="result-stat-label">FINAL SCORE</span>
+        <span id="result-score">0</span>
+      </div>
+
+      <div id="result-wave">
+        <span class="result-wave-label">WAVE REACHED</span>
+        <span id="result-wave-value">1</span>
+      </div>
+
+      <div class="result-buttons">
+        <button class="btn btn-primary" id="btn-restart">
+          <span class="btn-icon">↺</span> PLAY AGAIN
+        </button>
+        <button class="btn btn-secondary" id="btn-to-menu">
+          MENU
+        </button>
+      </div>
     </div>
 
   </div>

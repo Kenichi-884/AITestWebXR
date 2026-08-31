@@ -7,12 +7,15 @@
  * 銃口(双子のバレル)が常にプレイヤーを向くようにしている。
  * プレイヤーには突撃せず、STANDOFF_RADIUSまで近づくと停止して弾を撃ち込む
  * (命中時は 'enemy:projectile-hit' イベントでダメージを通知。App.jsが購読して処理する)。
+ * 停止中は左右・上下に自由な揺れを重ねて飛び回る(_applyFlightWobble())。
+ * 敵はプール方式で再利用されるため、ウェーブ色の再着色はせず(GLB本来の色を保つ)、
+ * 発射管理・弾のクリアは _onReset() / _defeat() / _onReachPlayer() で行う。
  * 他の敵タイプを追加する場合は、このファイルではなく新しいサブクラスファイルを作ること。
  *
  * このファイルで触るもの: このファイルのみ
  * このファイルで触らないもの: EventBus, Config(値は変更OK)
- * (移動処理をカスタマイズするため Enemy.js に _updateMovement() フックを追加し、
- *  App.js に 'enemy:projectile-hit' の購読を1行追加している)
+ * (移動処理・プール再利用フックのため Enemy.js に _updateMovement()/_onReset() フックを追加し、
+ *  App.js に 'enemy:projectile-hit' の購読を追加している)
  * ============================================================
  */
 
@@ -60,11 +63,23 @@ export class EnemyDrone extends Enemy {
     this._placeholder = super._createMesh();
     pivot.add(this._placeholder);
 
-    // 射撃管理: 初弾のタイミングをばらけさせて全ドローンが同時に撃たないようにする
-    this._fireTimer = Config.DRONE.FIRE_INTERVAL * (0.5 + Math.random() * 0.5);
     this._projectiles = [];
+    this._resetFlightState();
 
-    // 飛行の揺れ: 左右・上下それぞれに主+副の周波数/位相をドローンごとにランダム化し、
+    _droneModelPromise.then((template) => this._onModelLoaded(template, pivot));
+
+    return pivot;
+  }
+
+  /**
+   * 射撃タイマー・飛行の揺れの位相をランダムに初期化する。
+   * 初回生成時(_createMesh)・プール再利用時(_onReset)の両方から呼ぶ。
+   */
+  _resetFlightState() {
+    // 初弾のタイミングをばらけさせて全ドローンが同時に撃たないようにする
+    this._fireTimer = Config.DRONE.FIRE_INTERVAL * (0.5 + Math.random() * 0.5);
+
+    // 左右・上下それぞれに主+副の周波数/位相をドローンごとにランダム化し、
     // 直線的でない自由な飛び方(斜め移動含む)を演出する。
     this._wobbleTime = 0;
     this._wobble = {
@@ -75,10 +90,6 @@ export class EnemyDrone extends Enemy {
       upPhase2: Math.random() * Math.PI * 2,
       upFreqRatio: WOBBLE_SECONDARY_FREQ_MIN + Math.random() * (WOBBLE_SECONDARY_FREQ_MAX - WOBBLE_SECONDARY_FREQ_MIN),
     };
-
-    _droneModelPromise.then((template) => this._onModelLoaded(template, pivot));
-
-    return pivot;
   }
 
   /**
@@ -87,13 +98,17 @@ export class EnemyDrone extends Enemy {
    * @param {THREE.Group} pivot
    */
   _onModelLoaded(template, pivot) {
-    if (!template || !this.isActive) return;
+    if (!template) return;
 
     pivot.remove(this._placeholder);
-    this._placeholder.geometry.dispose();
-    this._placeholder.material.dispose();
+    this._placeholder.traverse((child) => {
+      if (!child.isMesh) return;
+      child.geometry.dispose();
+      child.material.dispose();
+    });
     this._placeholder = null;
     this._materials = [];
+    this._wireMaterials = [];
 
     const model = template.clone(true);
     model.rotation.y = DRONE_AIM_CORRECTION_Y;
@@ -103,7 +118,7 @@ export class EnemyDrone extends Enemy {
       child.castShadow = true;
       // モデル本来の色・テクスチャをそのまま使う(ウェーブ色のエミッシブ着色はしない)
       child.material = child.material.clone();
-      this._materials.push(child.material);
+      this._trackMaterial(child.material);
     });
 
     pivot.add(model);
@@ -183,6 +198,17 @@ export class EnemyDrone extends Enemy {
       this._fireProjectile(playerPosition);
     }
 
+    this._updateProjectiles(delta, playerPosition);
+  }
+
+  /**
+   * 発射済みの弾を前進させ、命中/期限切れの弾を消す。
+   * ドローン自身が撃破・到達済みになった後は呼ばれなくなる想定のため、
+   * その場合は _defeat()/_onReachPlayer() 側で即座に弾をクリアする。
+   * @param {number} delta
+   * @param {THREE.Vector3} playerPosition
+   */
+  _updateProjectiles(delta, playerPosition) {
     for (const projectile of this._projectiles) {
       if (!projectile.active) continue;
 
@@ -241,13 +267,43 @@ export class EnemyDrone extends Enemy {
   }
 
   /**
-   * ドローン本体に加えて、発射済みの弾もすべて破棄する
+   * 発射済みの弾をすべて即座に消す。
+   * ドローンが撃破・到達済みになると update() が呼ばれなくなり(またはプールで
+   * 再利用され位置が変わる)、発射中の弾を放置すると永遠にシーンへ残ってしまうため、
+   * その時点で残っている弾は消してしまう。
    */
-  _disposeMesh() {
-    super._disposeMesh();
+  _clearProjectiles() {
     for (const projectile of this._projectiles) {
       if (projectile.active) this._removeProjectile(projectile);
     }
     this._projectiles = [];
+  }
+
+  _defeat() {
+    super._defeat();
+    this._clearProjectiles();
+  }
+
+  _onReachPlayer() {
+    super._onReachPlayer();
+    this._clearProjectiles();
+  }
+
+  /**
+   * プール再利用時の見た目更新フック。
+   * GLBモデル本来の色を保つため、基底クラスのようなウェーブ色の再着色は行わない。
+   * 射撃タイマー・飛行の揺れ・残弾を初期化するのみ。
+   */
+  _onReset() {
+    this._clearProjectiles();
+    this._resetFlightState();
+  }
+
+  /**
+   * ドローン本体に加えて、発射済みの弾もすべて破棄する
+   */
+  _disposeMesh() {
+    super._disposeMesh();
+    this._clearProjectiles();
   }
 }

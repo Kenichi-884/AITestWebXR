@@ -24,7 +24,7 @@ const Config = Object.freeze({
     MAX_SPEED: 1.5,           // 速度の上限
     BASE_HP: 1,               // 敵の初期HP
     HP_PER_WAVE: 1,           // ウェーブごとにHPが増加する量
-    HIT_RADIUS: 0.3,          // 弾との当たり判定半径 (m)
+    HIT_RADIUS: 0.35,         // 弾との当たり判定半径 (m)
     REACH_RADIUS: 0.6,        // プレイヤーに「到達」とみなす距離 (m)
     SCORE_PER_KILL: 100,      // 1体撃破あたりのスコア
     SPAWN_RADIUS_MIN: 3.0,    // スポーン最小距離 (m)
@@ -50,21 +50,32 @@ const Config = Object.freeze({
 
   // ----- スポーナー -----
   SPAWNER: {
-    BASE_INTERVAL: 3.0,       // 初期スポーン間隔 (秒)
-    MIN_INTERVAL: 0.8,        // スポーン間隔の最小値 (秒)
+    BASE_INTERVAL: 1.8,       // 初期スポーン間隔 (秒)
+    MIN_INTERVAL: 0.4,        // スポーン間隔の最小値 (秒)
     INTERVAL_DECAY: 0.2,      // ウェーブごとに間隔を短縮する秒数
-    ENEMIES_PER_WAVE: 10,     // 1ウェーブあたりの撃破目標数
+    ENEMIES_PER_WAVE: 15,     // 1ウェーブあたりの撃破目標数
+    MAX_ACTIVE_ENEMIES: 15,   // 同時出現上限(負荷制御)
+  },
+
+  // ----- パワーアップアイテム -----
+  POWERUP: {
+    DURATION:           15,    // パワーアップ持続時間 (秒)
+    DROP_CHANCE:        0.35,  // 敵撃破時のドロップ率 (0〜1)
+    POWER_DAMAGE:       5,     // power: ダメージ倍率
+    RAPID_COOLDOWN:     0.03,  // rapid: クールダウン (秒)
+    SHOTGUN_PELLETS:    7,     // shotgun: 発射数
+    SHOTGUN_SPREAD:     0.14,  // shotgun: 拡散半角 (rad)
   },
 
   // ----- 武器 -----
   WEAPON: {
-    BULLET_SPEED: 15.0,       // 弾速 (m/s)
+    BULLET_SPEED: 22.0,       // 弾速 (m/s)
     BULLET_LIFETIME: 3.0,     // 弾の生存時間 (秒)
-    COOLDOWN: 0.3,            // 連射クールダウン (秒)
+    COOLDOWN: 0.18,           // 連射クールダウン (秒)
     BULLET_RADIUS: 0.05,      // 弾のサイズ (m) ─ 当たり判定にも使用
     MAX_AMMO: 12,             // 装弾数
     RELOAD_TIME: 1.8,         // リロード時間 (秒)
-    BULLET_GRAVITY: 0.8,      // 弾の重力加速度 (m/s²) ─ 0にすると直線飛行
+    BULLET_GRAVITY: 0.2,      // 弾の重力加速度 (m/s²) ─ 0にすると直線飛行
   },
 
   // ----- シーン -----
