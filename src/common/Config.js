@@ -33,6 +33,21 @@ const Config = Object.freeze({
     SPAWN_HEIGHT_MAX: 1.5,
   },
 
+  // ----- ドローン(敵) -----
+  DRONE: {
+    STANDOFF_RADIUS: 3.0,        // この距離まで近づいたら停止し、以降は射撃のみ行う (m)
+    FIRE_INTERVAL: 1.6,          // 射撃間隔 (秒)
+    PROJECTILE_SPEED: 6.0,       // 弾速 (m/s)
+    PROJECTILE_LIFETIME: 4.0,    // 弾が消えるまでの時間 (秒)
+    PROJECTILE_RADIUS: 0.07,     // 弾の見た目サイズ (m)
+    PROJECTILE_HIT_RADIUS: 0.4,  // プレイヤーへの命中判定半径 (m)
+    PROJECTILE_DAMAGE: 10,       // 弾1発が命中した際のダメージ
+    STRAFE_AMPLITUDE: 0.6,       // プレイヤー方向に対して左右に揺れる最大振幅 (m)
+    STRAFE_ANGULAR_SPEED: 1.8,   // 左右の揺れの角速度 (rad/s) ─ 大きいほど速く揺れる
+    BOB_AMPLITUDE: 0.5,          // 上下に揺れる最大振幅 (m)
+    BOB_ANGULAR_SPEED: 1.3,      // 上下の揺れの角速度 (rad/s)
+  },
+
   // ----- スポーナー -----
   SPAWNER: {
     BASE_INTERVAL: 3.0,       // 初期スポーン間隔 (秒)

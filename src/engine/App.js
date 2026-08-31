@@ -65,6 +65,7 @@ class App {
     // ── EventBus ────────────────────────────────────────────
     EventBus.on('enemy:defeated',        ({ score }) => this._addScore(score));
     EventBus.on('enemy:reached-player',  ({ damage }) => this._applyDamage(damage));
+    EventBus.on('enemy:projectile-hit',  ({ damage }) => this._applyDamage(damage));
 
     // ── デスクトップ: マウスルック ────────────────────────────
     this._yaw = 0;
