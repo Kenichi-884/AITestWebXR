@@ -48,8 +48,8 @@ class App {
     this._renderer.xr.enabled = true;
     this._renderer.shadowMap.enabled = true;
     this._renderer.shadowMap.type = THREE.BasicShadowMap;
-    this._renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this._renderer.toneMappingExposure = 1.0;
+    // トーンマッピングは PostProcessing の ToneMappingEffect に委譲するため無効化
+    this._renderer.toneMapping = THREE.NoToneMapping;
 
     // ── モジュール初期化 ─────────────────────────────────────
     this._sceneManager  = new SceneManager(this._renderer);
@@ -141,6 +141,12 @@ class App {
       await this._renderer.xr.setSession(session);
       // Quest では devicePixelRatio=1 にするだけで GPU 負荷が大幅に下がる
       this._renderer.setPixelRatio(1);
+      // XR フレームバッファのサイズに Composer を合わせる
+      // (ミスマッチがあると最終出力が黒画面になる)
+      const baseLayer = session.renderState?.baseLayer;
+      if (baseLayer) {
+        this._postProcessing.setSize(baseLayer.framebufferWidth, baseLayer.framebufferHeight);
+      }
       this._sceneManager.setWeaponMode('xr');
       this._isDesktopMode = false;
       this._startGame();
@@ -148,6 +154,8 @@ class App {
       session.addEventListener('end', () => {
         if (this._state === STATE.PLAYING) this._endGame();
         this._worldHUD.hide();
+        // XR 終了後は画面サイズに戻す
+        this._postProcessing.setSize(window.innerWidth, window.innerHeight);
       });
     } catch (err) {
       console.error('[App] XR session failed:', err);
@@ -384,12 +392,7 @@ class App {
       console.error('[App] frame error:', err);
     }
 
-    // WebXR中はEffectComposerのフレームバッファ競合を避けて直接描画
-    if (this._renderer.xr.isPresenting) {
-      this._renderer.render(this._sceneManager.scene, this._sceneManager.camera);
-    } else {
-      this._postProcessing.render(delta);
-    }
+    this._postProcessing.render(delta);
   }
 
   _update(delta, frame) {

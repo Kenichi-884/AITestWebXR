@@ -3,28 +3,27 @@
  * ============================================================
  * 担当: エフェクト担当メンバー
  *
- * 使用ライブラリ: Three.js 組み込みの postprocessing アドオン
- *   (postprocessing npm パッケージではなく three/addons を使用)
+ * 重要: renderer.toneMapping は必ず NoToneMapping にすること
+ *   → トーンマッピングは ToneMappingEffect が担当する
+ *   → renderer 側で適用すると中間バッファで二重処理になり PBR が壊れる
  *
  * 作業ガイド:
- *   - Bloom強度    → bloomPass.strength
- *   - Bloom閾値    → bloomPass.threshold (低いほど広く光る)
- *   - Bloom半径    → bloomPass.radius
- *   - Vignette濃さ → vignettePass.uniforms['darkness'].value
- *
- * WebXR注意事項:
- *   - OutputPass が必須 (Three.js r152+): トーンマッピング + 色空間変換を担当
- *   - renderer.toneMapping は OutputPass が引き継ぐため値を保持したまま可
+ *   - Bloom強度   → bloomEffect.intensity
+ *   - Bloom閾値   → bloomEffect.luminanceMaterial.threshold
+ *   - Vignette濃さ → vignetteEffect の darkness
  * ============================================================
  */
 
 import * as THREE from 'three';
-import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
-import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
-import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
-import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
-import { VignetteShader }  from 'three/addons/shaders/VignetteShader.js';
+import {
+  EffectComposer,
+  RenderPass,
+  EffectPass,
+  BloomEffect,
+  VignetteEffect,
+  ToneMappingEffect,
+  ToneMappingMode,
+} from 'postprocessing';
 
 export class PostProcessing {
   /**
@@ -36,50 +35,55 @@ export class PostProcessing {
     this._renderer = renderer;
     this._scene    = scene;
     this._camera   = camera;
-    this._fallback = false;
 
-    this._composer = new EffectComposer(renderer);
+    // !! 重要 !!
+    // renderer 側のトーンマッピングを無効化し、ToneMappingEffect に委譲する。
+    // これをしないと中間バッファ描画時にトーンマップが掛かり
+    // PBR マテリアル（敵・武器）が正しく描画されない。
+    renderer.toneMapping = THREE.NoToneMapping;
+
+    // HalfFloat: HDR 値を保持してブルームを正確に計算するために必要
+    this._composer = new EffectComposer(renderer, {
+      frameBufferType: THREE.HalfFloatType,
+      multisampling:   0, // Quest: MSAA 無効で負荷削減
+    });
 
     // ── パス構成 ──────────────────────────────────────────
-    // 1. シーン描画
     this._composer.addPass(new RenderPass(scene, camera));
 
-    // 2. Bloom (UnrealBloomPass: Three.js 組み込み)
-    //    strength: 光の強さ / radius: 広がり / threshold: 光らせる輝度の閾値
-    this.bloomPass = new UnrealBloomPass(
-      new THREE.Vector2(window.innerWidth, window.innerHeight),
-      1.0,   // strength
-      0.4,   // radius
-      0.70,  // threshold (高いほど明るいものだけ光る・負荷↓)
-    );
-    this._composer.addPass(this.bloomPass);
+    // Bloom + トーンマッピング + Vignette を1パスにまとめる（効率化）
+    this.bloomEffect = new BloomEffect({
+      intensity:           1.2,
+      luminanceThreshold:  0.65, // これ以上の輝度だけ光る(高いほど負荷↓)
+      luminanceSmoothing:  0.08,
+      mipmapBlur:          true, // Quest 向け軽量ブラー
+      levels:              6,
+    });
 
-    // 3. Vignette (周辺暗化・負荷ほぼゼロ)
-    this.vignettePass = new ShaderPass(VignetteShader);
-    this.vignettePass.uniforms['offset'].value   = 0.95;
-    this.vignettePass.uniforms['darkness'].value = 1.5;
-    this._composer.addPass(this.vignettePass);
+    // ACESFilmic トーンマッピングを Composer 側で担当
+    this.toneMappingEffect = new ToneMappingEffect({
+      mode: ToneMappingMode.ACES_FILMIC,
+    });
 
-    // 4. OutputPass: トーンマッピング + リニア→sRGB色空間変換
-    //    Three.js r152+ では必須。これがないと PBR マテリアルの色が壊れる
-    this._composer.addPass(new OutputPass());
+    this.vignetteEffect = new VignetteEffect({
+      offset:   0.35,
+      darkness: 0.5,
+    });
+
+    this._composer.addPass(new EffectPass(
+      camera,
+      this.bloomEffect,
+      this.toneMappingEffect,
+      this.vignetteEffect,
+    ));
   }
 
   /** メインループから呼ぶ。renderer.render() の代わり */
   render(delta) {
-    try {
-      this._composer.render(delta);
-    } catch (e) {
-      // EffectComposer が失敗した場合は直接描画にフォールバック
-      if (!this._fallback) {
-        console.warn('[PostProcessing] EffectComposer failed, falling back to direct render:', e);
-        this._fallback = true;
-      }
-      this._renderer.render(this._scene, this._camera);
-    }
+    this._composer.render(delta);
   }
 
-  /** ウィンドウリサイズ時に呼ぶ */
+  /** ウィンドウリサイズ / XRフレームバッファサイズ変更時に呼ぶ */
   setSize(width, height) {
     this._composer.setSize(width, height);
   }
