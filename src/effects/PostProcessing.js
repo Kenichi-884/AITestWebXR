@@ -3,26 +3,28 @@
  * ============================================================
  * 担当: エフェクト担当メンバー
  *
+ * 使用ライブラリ: Three.js 組み込みの postprocessing アドオン
+ *   (postprocessing npm パッケージではなく three/addons を使用)
+ *
  * 作業ガイド:
- *   - Bloom強度   → bloomEffect.intensity
- *   - Bloom閾値   → bloomEffect.luminanceMaterial.threshold
- *   - Vignette濃さ → vignetteEffect の darkness
- *   - エフェクト追加 → EffectPass に追加する
+ *   - Bloom強度    → bloomPass.strength
+ *   - Bloom閾値    → bloomPass.threshold (低いほど広く光る)
+ *   - Bloom半径    → bloomPass.radius
+ *   - Vignette濃さ → vignettePass.uniforms['darkness'].value
  *
  * WebXR注意事項:
- *   - Quest GPU 負荷を考慮し mipmapBlur: true を使用
- *   - luminanceThreshold を高めにして明るいものだけを光らせる
+ *   - OutputPass が必須 (Three.js r152+): トーンマッピング + 色空間変換を担当
+ *   - renderer.toneMapping は OutputPass が引き継ぐため値を保持したまま可
  * ============================================================
  */
 
 import * as THREE from 'three';
-import {
-  EffectComposer,
-  RenderPass,
-  EffectPass,
-  BloomEffect,
-  VignetteEffect,
-} from 'postprocessing';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
+import { VignetteShader }  from 'three/addons/shaders/VignetteShader.js';
 
 export class PostProcessing {
   /**
@@ -36,31 +38,31 @@ export class PostProcessing {
     this._camera   = camera;
     this._fallback = false;
 
-    // Quest の WebGL 実装では HalfFloatType が使えないことがあるためデフォルトに統一
     this._composer = new EffectComposer(renderer);
 
     // ── パス構成 ──────────────────────────────────────────
-    const renderPass = new RenderPass(scene, camera);
+    // 1. シーン描画
+    this._composer.addPass(new RenderPass(scene, camera));
 
-    // Bloom: mipmapBlur=true が Quest で最も効率的なアルゴリズム
-    this.bloomEffect = new BloomEffect({
-      intensity: 1.2,
-      luminanceThreshold: 0.65, // これ以上の輝度だけ光る(高いほど負荷↓)
-      luminanceSmoothing: 0.08,
-      mipmapBlur: true,         // Quest 向け軽量ブラー
-      levels: 6,                // ブラーのミップマップ段数
-    });
+    // 2. Bloom (UnrealBloomPass: Three.js 組み込み)
+    //    strength: 光の強さ / radius: 広がり / threshold: 光らせる輝度の閾値
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      1.0,   // strength
+      0.4,   // radius
+      0.70,  // threshold (高いほど明るいものだけ光る・負荷↓)
+    );
+    this._composer.addPass(this.bloomPass);
 
-    // Vignette: 周辺暗化(負荷ほぼゼロ)
-    this.vignetteEffect = new VignetteEffect({
-      offset: 0.35,
-      darkness: 0.5,
-    });
+    // 3. Vignette (周辺暗化・負荷ほぼゼロ)
+    this.vignettePass = new ShaderPass(VignetteShader);
+    this.vignettePass.uniforms['offset'].value   = 0.95;
+    this.vignettePass.uniforms['darkness'].value = 1.5;
+    this._composer.addPass(this.vignettePass);
 
-    const effectPass = new EffectPass(camera, this.bloomEffect, this.vignetteEffect);
-
-    this._composer.addPass(renderPass);
-    this._composer.addPass(effectPass);
+    // 4. OutputPass: トーンマッピング + リニア→sRGB色空間変換
+    //    Three.js r152+ では必須。これがないと PBR マテリアルの色が壊れる
+    this._composer.addPass(new OutputPass());
   }
 
   /** メインループから呼ぶ。renderer.render() の代わり */
