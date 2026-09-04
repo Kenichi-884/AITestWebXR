@@ -3,27 +3,28 @@
  * ============================================================
  * 担当: エフェクト担当メンバー
  *
- * 重要: renderer.toneMapping は必ず NoToneMapping にすること
- *   → トーンマッピングは ToneMappingEffect が担当する
- *   → renderer 側で適用すると中間バッファで二重処理になり PBR が壊れる
+ * 動作モード:
+ *   - デスクトップ: Bloom + Vignette が有効
+ *   - WebXR (Quest): 非対応のため無効 (renderer.render() 直接描画)
  *
- * 作業ガイド:
- *   - Bloom強度   → bloomEffect.intensity
- *   - Bloom閾値   → bloomEffect.luminanceMaterial.threshold
- *   - Vignette濃さ → vignetteEffect の darkness
+ *   WebXR の XRWebGLLayer フレームバッファは EffectComposer の
+ *   中間レンダーターゲット方式と根本的に非互換のため、
+ *   XR 中はポストエフェクトを使用しない。
+ *
+ * 作業ガイド(デスクトップ向け):
+ *   - Bloom強度   → bloomPass.strength
+ *   - Bloom閾値   → bloomPass.threshold
+ *   - Vignette濃さ → vignettePass.uniforms['darkness'].value
  * ============================================================
  */
 
 import * as THREE from 'three';
-import {
-  EffectComposer,
-  RenderPass,
-  EffectPass,
-  BloomEffect,
-  VignetteEffect,
-  ToneMappingEffect,
-  ToneMappingMode,
-} from 'postprocessing';
+import { EffectComposer }  from 'three/addons/postprocessing/EffectComposer.js';
+import { RenderPass }      from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { ShaderPass }      from 'three/addons/postprocessing/ShaderPass.js';
+import { OutputPass }      from 'three/addons/postprocessing/OutputPass.js';
+import { VignetteShader }  from 'three/addons/shaders/VignetteShader.js';
 
 export class PostProcessing {
   /**
@@ -36,54 +37,37 @@ export class PostProcessing {
     this._scene    = scene;
     this._camera   = camera;
 
-    // !! 重要 !!
-    // renderer 側のトーンマッピングを無効化し、ToneMappingEffect に委譲する。
-    // これをしないと中間バッファ描画時にトーンマップが掛かり
-    // PBR マテリアル（敵・武器）が正しく描画されない。
-    renderer.toneMapping = THREE.NoToneMapping;
-
-    // HalfFloat: HDR 値を保持してブルームを正確に計算するために必要
-    this._composer = new EffectComposer(renderer, {
-      frameBufferType: THREE.HalfFloatType,
-      multisampling:   0, // Quest: MSAA 無効で負荷削減
-    });
-
-    // ── パス構成 ──────────────────────────────────────────
+    this._composer = new EffectComposer(renderer);
     this._composer.addPass(new RenderPass(scene, camera));
 
-    // Bloom + トーンマッピング + Vignette を1パスにまとめる（効率化）
-    this.bloomEffect = new BloomEffect({
-      intensity:           1.2,
-      luminanceThreshold:  0.65, // これ以上の輝度だけ光る(高いほど負荷↓)
-      luminanceSmoothing:  0.08,
-      mipmapBlur:          true, // Quest 向け軽量ブラー
-      levels:              6,
-    });
+    // Bloom
+    this.bloomPass = new UnrealBloomPass(
+      new THREE.Vector2(window.innerWidth, window.innerHeight),
+      1.0,   // strength
+      0.4,   // radius
+      0.70,  // threshold
+    );
+    this._composer.addPass(this.bloomPass);
 
-    // ACESFilmic トーンマッピングを Composer 側で担当
-    this.toneMappingEffect = new ToneMappingEffect({
-      mode: ToneMappingMode.ACES_FILMIC,
-    });
+    // Vignette
+    this.vignettePass = new ShaderPass(VignetteShader);
+    this.vignettePass.uniforms['offset'].value   = 0.95;
+    this.vignettePass.uniforms['darkness'].value = 1.5;
+    this._composer.addPass(this.vignettePass);
 
-    this.vignetteEffect = new VignetteEffect({
-      offset:   0.35,
-      darkness: 0.5,
-    });
-
-    this._composer.addPass(new EffectPass(
-      camera,
-      this.bloomEffect,
-      this.toneMappingEffect,
-      this.vignetteEffect,
-    ));
+    // OutputPass: Three.js r152+ 必須。トーンマッピング + 色空間変換を担当
+    this._composer.addPass(new OutputPass());
   }
 
-  /** メインループから呼ぶ。renderer.render() の代わり */
+  /**
+   * デスクトップ用レンダリング (EffectComposer)
+   * XR中は App.js 側で renderer.render() を直接呼ぶこと
+   */
   render(delta) {
     this._composer.render(delta);
   }
 
-  /** ウィンドウリサイズ / XRフレームバッファサイズ変更時に呼ぶ */
+  /** リサイズ時に呼ぶ */
   setSize(width, height) {
     this._composer.setSize(width, height);
   }
