@@ -14,7 +14,7 @@
  */
 
 import * as THREE from 'three';
-import { Enemy } from './Enemy.js';
+import { EnemyDrone as Enemy } from './EnemyDrone.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 

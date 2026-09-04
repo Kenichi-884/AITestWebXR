@@ -89,6 +89,10 @@ class App {
       this._applyDamage(damage);
       this._triggerShake(false); // 被弾: 大きめのシェイク
     });
+    EventBus.on('enemy:projectile-hit', ({ damage }) => {
+      this._applyDamage(damage);
+      this._triggerShake(false); // ドローンの弾が命中: 大きめのシェイク
+    });
     EventBus.on('weapon:fired', () => this._triggerShake(true)); // 射撃: 小さいシェイク
 
     // ── デスクトップ: マウスルック ────────────────────────────
