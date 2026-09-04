@@ -252,7 +252,7 @@ export class EnemyDrone extends Enemy {
       lifetime: Config.DRONE.PROJECTILE_LIFETIME,
       active: true,
     });
-    EventBus.emit('sound:play', { id: 'shoot' });
+    EventBus.emit('sound:play3d', { id: 'shoot', position: this.mesh.position });
   }
 
   /**

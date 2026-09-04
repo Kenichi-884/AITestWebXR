@@ -110,7 +110,8 @@ export class SoundManager {
     // ---- EventBus購読 ----
     // NOTE: 他ファイルを変更せずに音を増やすため、
     //       'sound:play' 以外のゲームイベントもここで直接拾っている。
-    EventBus.on('sound:play', ({ id }) => this.play(id));
+    EventBus.on('sound:play',   ({ id })             => this.play(id));
+    EventBus.on('sound:play3d', ({ id, position })   => this.playAt(id, position));
 
     EventBus.on('game:start', () => {
       this._wave = 1;
@@ -129,7 +130,13 @@ export class SoundManager {
       this._wave = wave;
     });
 
-    EventBus.on('enemy:spawned', () => this.play('spawn'));
+    EventBus.on('enemy:spawned', ({ enemy }) => {
+      if (enemy?.position) {
+        this.playAt('spawn', enemy.position);
+      } else {
+        this.play('spawn');
+      }
+    });
   }
 
   // ── 初期化 ───────────────────────────────────────────────
@@ -215,6 +222,81 @@ export class SoundManager {
     const now = this._ctx.currentTime;
     for (const layer of layers) {
       this._playTone(layer, now);
+    }
+  }
+
+  /**
+   * 3D空間の指定座標からサウンドを再生する
+   * @param {string} id
+   * @param {{x: number, y: number, z: number}} position  THREE.Vector3 でも可
+   */
+  playAt(id, position) {
+    if (!this._initialized || !this._ctx || this._muted) return;
+
+    const panner = this._ctx.createPanner();
+    panner.panningModel  = 'HRTF';      // バイノーラル空間音響
+    panner.distanceModel = 'inverse';
+    panner.refDistance   = 1.5;
+    panner.maxDistance   = 30;
+    panner.rolloffFactor = 1.5;
+    panner.coneInnerAngle = 360;        // 全方向放射
+
+    if (panner.positionX !== undefined) {
+      panner.positionX.value = position.x;
+      panner.positionY.value = position.y;
+      panner.positionZ.value = position.z;
+    } else {
+      panner.setPosition(position.x, position.y, position.z);
+    }
+
+    // コンプレッサー手前に接続(スフィアゲインを通さず直接)
+    panner.connect(this._sfxComp);
+
+    if (this._buffers.has(id)) {
+      this._playBuffer(this._buffers.get(id), this._volumeForId(id), panner);
+      return;
+    }
+
+    const layers = this._soundDefs[id];
+    if (!layers) {
+      console.warn(`[SoundManager] 未定義のサウンドID: "${id}"`);
+      return;
+    }
+
+    const now = this._ctx.currentTime;
+    for (const layer of layers) {
+      this._playTone(layer, now, panner);
+    }
+  }
+
+  /**
+   * AudioContext のリスナー位置・向きをカメラに同期する
+   * App.js から毎フレーム呼ぶ
+   * @param {THREE.Camera} camera
+   */
+  updateListener(camera) {
+    if (!this._initialized || !this._ctx) return;
+    const listener = this._ctx.listener;
+    const m = camera.matrixWorld.elements;
+
+    // matrixWorld から位置・向きを取り出す
+    const px = m[12], py = m[13], pz = m[14];
+    const fx = -m[8],  fy = -m[9],  fz = -m[10]; // カメラ -Z 方向 = forward
+    const ux =  m[4],  uy =  m[5],  uz =  m[6];  // カメラ +Y 方向 = up
+
+    if (listener.positionX !== undefined) {
+      listener.positionX.value = px;
+      listener.positionY.value = py;
+      listener.positionZ.value = pz;
+      listener.forwardX.value  = fx;
+      listener.forwardY.value  = fy;
+      listener.forwardZ.value  = fz;
+      listener.upX.value = ux;
+      listener.upY.value = uy;
+      listener.upZ.value = uz;
+    } else {
+      listener.setPosition(px, py, pz);
+      listener.setOrientation(fx, fy, fz, ux, uy, uz);
     }
   }
 
@@ -820,15 +902,16 @@ export class SoundManager {
    * 読み込み済みバッファを1回だけ再生する
    * @param {AudioBuffer} buffer
    * @param {number} volume
+   * @param {AudioNode} [dest] 出力先。省略で効果音バス
    */
-  _playBuffer(buffer, volume) {
+  _playBuffer(buffer, volume, dest = null) {
     if (!this._ctx || this._activeVoices >= SOUND_CONFIG.MAX_VOICES) return;
     const source = this._ctx.createBufferSource();
     const gain = this._ctx.createGain();
     source.buffer = buffer;
     gain.gain.value = Math.max(0.0001, volume);
     source.connect(gain);
-    gain.connect(this._sfxGain);
+    gain.connect(dest ?? this._sfxGain);
 
     this._activeVoices++;
     source.onended = () => {

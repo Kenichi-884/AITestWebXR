@@ -215,7 +215,7 @@ export class Enemy {
     if (!this.isActive || this.isDefeated) return;
 
     this.hp -= damage;
-    EventBus.emit('sound:play', { id: 'hit' });
+    EventBus.emit('sound:play3d', { id: 'hit', position: this.position });
 
     // ヒットフラッシュ
     for (const mat of this._materials) mat.emissiveIntensity = 1.0;
@@ -269,7 +269,7 @@ export class Enemy {
       enemy: this,
       score: Config.ENEMY.SCORE_PER_KILL * this.wave,
     });
-    EventBus.emit('sound:play', { id: 'defeat' });
+    EventBus.emit('sound:play3d', { id: 'defeat', position: this.position });
 
     // 吹き飛び初期化(アニメーション本体は _updateDying でゲームループ処理)
     this._dying        = true;

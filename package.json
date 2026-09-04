@@ -9,7 +9,8 @@
   },
   "dependencies": {
     "fflate": "^0.8.2",
-    "three": "^0.167.0"
+    "postprocessing": "^6.39.4",
+    "three": "^0.170.0"
   },
   "devDependencies": {
     "@vitejs/plugin-basic-ssl": "^1.1.0",

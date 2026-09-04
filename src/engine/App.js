@@ -19,6 +19,7 @@ import { EnemySpawner } from '../gameplay/EnemySpawner.js';
 import { Weapon } from '../gameplay/Weapon.js';
 import { ItemDrop } from '../gameplay/ItemDrop.js';
 import { EffectManager } from '../effects/EffectManager.js';
+import { PostProcessing } from '../effects/PostProcessing.js';
 import { HUD } from '../screens/HUD.js';
 import { WorldHUD } from '../screens/WorldHUD.js';
 import { MenuScreen } from '../screens/MenuScreen.js';
@@ -52,6 +53,11 @@ class App {
 
     // ── モジュール初期化 ─────────────────────────────────────
     this._sceneManager  = new SceneManager(this._renderer);
+    this._postProcessing = new PostProcessing(
+      this._renderer,
+      this._sceneManager.scene,
+      this._sceneManager.camera,
+    );
     this._soundManager  = new SoundManager();
     this._effectManager = new EffectManager(this._sceneManager.scene);
     this._enemySpawner  = new EnemySpawner(this._sceneManager.scene);
@@ -102,6 +108,11 @@ class App {
 
     // フレームごとに再利用するVector3（GCを避けるためキャッシュ）
     this._playerPos = new THREE.Vector3();
+
+    // リサイズ時にポストプロセスコンポーザーも更新
+    window.addEventListener('resize', () => {
+      this._postProcessing.setSize(window.innerWidth, window.innerHeight);
+    });
 
     this._checkXRSupport();
     this._renderer.setAnimationLoop(this._onAnimationFrame.bind(this));
@@ -366,11 +377,14 @@ class App {
     const delta = Math.min((time - this._lastTime) / 1000, 0.1);
     this._lastTime = time;
 
+    // 3D音響のリスナー位置をカメラに同期
+    this._soundManager.updateListener(this._sceneManager.camera);
+
     try { this._update(delta, frame); } catch (err) {
       console.error('[App] frame error:', err);
     }
 
-    this._renderer.render(this._sceneManager.scene, this._sceneManager.camera);
+    this._postProcessing.render(delta);
   }
 
   _update(delta, frame) {
