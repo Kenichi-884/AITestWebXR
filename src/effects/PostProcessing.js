@@ -32,13 +32,12 @@ export class PostProcessing {
    */
   constructor(renderer, scene, camera) {
     this._renderer = renderer;
+    this._scene    = scene;
     this._camera   = camera;
+    this._fallback = false;
 
-    // HDR レンダーターゲット (ブルームの精度向上)
-    this._composer = new EffectComposer(renderer, {
-      frameBufferType: THREE.HalfFloatType,
-      multisampling: 0, // Quest では MSAA を切って負荷削減
-    });
+    // Quest の WebGL 実装では HalfFloatType が使えないことがあるためデフォルトに統一
+    this._composer = new EffectComposer(renderer);
 
     // ── パス構成 ──────────────────────────────────────────
     const renderPass = new RenderPass(scene, camera);
@@ -66,7 +65,16 @@ export class PostProcessing {
 
   /** メインループから呼ぶ。renderer.render() の代わり */
   render(delta) {
-    this._composer.render(delta);
+    try {
+      this._composer.render(delta);
+    } catch (e) {
+      // EffectComposer が失敗した場合は直接描画にフォールバック
+      if (!this._fallback) {
+        console.warn('[PostProcessing] EffectComposer failed, falling back to direct render:', e);
+        this._fallback = true;
+      }
+      this._renderer.render(this._scene, this._camera);
+    }
   }
 
   /** ウィンドウリサイズ時に呼ぶ */
