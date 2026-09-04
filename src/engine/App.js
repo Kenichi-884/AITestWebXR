@@ -384,7 +384,12 @@ class App {
       console.error('[App] frame error:', err);
     }
 
-    this._postProcessing.render(delta);
+    // WebXR 中は EffectComposer がフレームバッファと競合するため直接描画
+    if (this._renderer.xr.isPresenting) {
+      this._renderer.render(this._sceneManager.scene, this._sceneManager.camera);
+    } else {
+      this._postProcessing.render(delta);
+    }
   }
 
   _update(delta, frame) {
