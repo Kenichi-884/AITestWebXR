@@ -257,11 +257,13 @@ export class Weapon {
 
       // 真鍮/金色の薬莢マテリアル
       const mat = new THREE.MeshStandardMaterial({
-        color: 0xc8930a,
-        roughness: 0.25,
-        metalness: 0.95,
-        transparent: false,
-        depthWrite: true,
+        color:            0xc8930a,
+        emissive:         new THREE.Color(0xff7700),
+        emissiveIntensity: 4.0, // XR疑似ブルーム: 弾丸が光って見える
+        roughness:        0.25,
+        metalness:        0.95,
+        transparent:      false,
+        depthWrite:       true,
       });
       const texLoader = new THREE.TextureLoader();
       texLoader.load('/assets/pistol/textures/pistol-bullet-tex.png', (tex) => {
@@ -452,11 +454,11 @@ export class Weapon {
     trailGeo.setDrawRange(0, 0);
     const trailCore = new THREE.Line(
       trailGeo,
-      new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9 }),
+      new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9, blending: THREE.AdditiveBlending, depthWrite: false }),
     );
     const trailOuter = new THREE.Line(
       trailGeo,
-      new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.35 }),
+      new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.5, blending: THREE.AdditiveBlending, depthWrite: false }),
     );
     const trail = new THREE.Group();
     trail.add(trailCore, trailOuter);
@@ -486,7 +488,7 @@ export class Weapon {
     // フォールバック: 金色の球
     const mesh = new THREE.Mesh(
       new THREE.SphereGeometry(0.012, 8, 8),
-      new THREE.MeshStandardMaterial({ color: 0xc8930a, roughness: 0.2, metalness: 0.9 }),
+      new THREE.MeshStandardMaterial({ color: 0xc8930a, emissive: new THREE.Color(0xff7700), emissiveIntensity: 4.0, roughness: 0.2, metalness: 0.9 }),
     );
     return mesh;
   }

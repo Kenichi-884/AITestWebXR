@@ -112,7 +112,7 @@ export class Enemy {
     const material = new THREE.MeshPhongMaterial({
       color: this._color,
       emissive: this._color,
-      emissiveIntensity: 0.8,
+      emissiveIntensity: 2.5, // XR疑似ブルーム: 強めの自発光でグロー感を出す
       shininess: 150,
       specular: new THREE.Color(0xffffff),
       transparent: true,
@@ -218,7 +218,7 @@ export class Enemy {
     EventBus.emit('sound:play3d', { id: 'hit', position: this.position });
 
     // ヒットフラッシュ
-    for (const mat of this._materials) mat.emissiveIntensity = 1.0;
+    for (const mat of this._materials) mat.emissiveIntensity = 6.0; // 被弾フラッシュ
     this._hitFlashTimer = 0.1;
 
     if (this.hp <= 0) {
