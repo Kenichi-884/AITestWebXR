@@ -55,7 +55,7 @@ class App {
     this._soundManager  = new SoundManager();
     this._effectManager = new EffectManager(this._sceneManager.scene);
     this._enemySpawner  = new EnemySpawner(this._sceneManager.scene);
-    this._weapon        = new Weapon(this._sceneManager.scene, this._renderer, this._sceneManager.camera);
+    this._weapon        = new Weapon(this._sceneManager.scene, this._renderer, this._sceneManager.camera, this._sceneManager);
     this._hud      = new HUD();
     this._worldHUD = new WorldHUD(this._sceneManager.scene, this._sceneManager.camera);
     this._menu = new MenuScreen({

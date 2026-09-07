@@ -14,7 +14,6 @@
  */
 
 import * as THREE from 'three';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
 
@@ -23,6 +22,14 @@ const TILT_THRESHOLD = -0.65; // コントローラーの前方向Y成分がこ�
 const TILT_HOLD_TIME = 0.4;   // 傾きを何秒維持したらリロード開始
 // ゲームバランス値は Config.WEAPON で管理 (src/common/Config.js)
 
+// 弾(マジックミサイル)の色。パワーアップ種別ごとに変化する
+const BULLET_COLORS = {
+  default: 0x8a4bff, // 通常: アルケインパープル
+  power:   0xff2200,
+  rapid:   0x00ffcc,
+  shotgun: 0xffaa00,
+};
+
 /** @typedef {{ mesh: THREE.Object3D, velocity: THREE.Vector3, lifetime: number, active: boolean, trail: THREE.Line, trailPos: Float32Array, trailLen: number }} Bullet */
 
 export class Weapon {
@@ -30,11 +37,13 @@ export class Weapon {
    * @param {THREE.Scene} scene
    * @param {THREE.WebGLRenderer} renderer
    * @param {THREE.Camera} camera
+   * @param {import('../engine/SceneManager.js').SceneManager} [sceneManager] 銃口レーザーと弾の弾道を一致させるために使用
    */
-  constructor(scene, renderer, camera) {
-    this.scene    = scene;
-    this.renderer = renderer;
-    this.camera   = camera;
+  constructor(scene, renderer, camera, sceneManager = null) {
+    this.scene        = scene;
+    this.renderer     = renderer;
+    this.camera       = camera;
+    this.sceneManager = sceneManager;
 
     /** @type {Bullet[]} */
     this._bullets = [];
@@ -55,11 +64,13 @@ export class Weapon {
     this._heldControllers = new Set(); // XR: 押しっぱなしのコントローラー
     this._mouseHeld       = false;     // Desktop: マウス押しっぱなし
 
-    /** @type {THREE.BufferGeometry|null} */
-    this._bulletGeo = null;
-    /** @type {THREE.Material|null} */
-    this._bulletMat = null;
-    this._loadBulletModel();
+    // 弾の見た目: マジックミサイル風の発光オーブ(コア+グロウシェル)
+    // ジオメトリは全弾で共有、マテリアルは色ごとにキャッシュして再利用する
+    this._bulletCoreGeo = new THREE.IcosahedronGeometry(0.045, 1);
+    this._bulletGlowGeo = new THREE.IcosahedronGeometry(0.09, 1);
+    /** @type {Map<number, {core: THREE.Material, glow: THREE.Material}>} */
+    this._bulletMatCache = new Map();
+    this._bulletTime = 0; // 発光パルス・回転アニメーション用の経過時間
 
     // フレームごとに再利用するオブジェクト（GCを避けるためキャッシュ）
     this._reloadQuat = new THREE.Quaternion();
@@ -150,12 +161,22 @@ export class Weapon {
       this._checkReloadTilt(delta);
     }
 
+    this._bulletTime += delta;
+    // 発光パルス: 色ごとに共有しているマテリアルへまとめて反映
+    const pulse = 1.1 + Math.sin(this._bulletTime * 12) * 0.5;
+    for (const mats of this._bulletMatCache.values()) {
+      mats.core.emissiveIntensity = pulse;
+    }
+
     for (const bullet of this._bullets) {
       if (!bullet.active) continue;
 
       // 重力で弾道を弧にする
       bullet.velocity.y -= Config.WEAPON.BULLET_GRAVITY * delta;
       bullet.mesh.position.addScaledVector(bullet.velocity, delta);
+      // オーブを回転させて魔力の渦感を出す
+      bullet.mesh.rotation.x += delta * 6;
+      bullet.mesh.rotation.y += delta * 9;
 
       // トレイル: 先頭に現在位置を挿入、末尾を押し出す
       const tp = bullet.trailPos;
@@ -232,54 +253,6 @@ export class Weapon {
     this._bullets = this._bullets.filter((b) => b.active);
   }
 
-  // ─── 弾モデルのロード ─────────────────────────────────────
-
-  /**
-   * 薬莢FBXを非同期ロードしてジオメトリ・マテリアルをキャッシュする
-   * ロード完了後は _createBulletMesh() でFBXメッシュが使われる
-   */
-  async _loadBulletModel() {
-    try {
-      const model = await new Promise((resolve, reject) =>
-        new FBXLoader().load('/assets/pistol/models/pistol-bullet-shell.fbx', resolve, undefined, reject),
-      );
-
-      let geo = null;
-      model.traverse((child) => {
-        if (child.isMesh && !geo) {
-          geo = child.geometry;
-          // FBX由来のマテリアルを確実に破棄
-          const mats = Array.isArray(child.material) ? child.material : [child.material];
-          mats.forEach((m) => m?.dispose());
-        }
-      });
-      if (!geo) throw new Error('No mesh in bullet FBX');
-
-      // 真鍮/金色の薬莢マテリアル
-      const mat = new THREE.MeshStandardMaterial({
-        color: 0xc8930a,
-        roughness: 0.25,
-        metalness: 0.95,
-        transparent: false,
-        depthWrite: true,
-      });
-      const texLoader = new THREE.TextureLoader();
-      texLoader.load('/assets/pistol/textures/pistol-bullet-tex.png', (tex) => {
-        tex.colorSpace = THREE.SRGBColorSpace;
-        mat.map = tex; mat.needsUpdate = true;
-      });
-      texLoader.load('/assets/pistol/textures/pistol-bullet-metallic.png', (tex) => {
-        mat.metalnessMap = tex; mat.roughnessMap = tex; mat.needsUpdate = true;
-      });
-
-      this._bulletGeo = geo;
-      this._bulletMat = mat;
-      console.log('[Weapon] Bullet shell loaded.');
-    } catch (e) {
-      console.warn('[Weapon] Bullet shell load failed:', e);
-    }
-  }
-
   // ─── コントローラー入力 ──────────────────────────────────
 
   _setupXRInput() {
@@ -307,10 +280,19 @@ export class Weapon {
 
   _fireFromController(controller) {
     if (this._cooldown > 0) return;
-    const position  = new THREE.Vector3();
-    const direction = new THREE.Vector3(0, 0, -1);
-    controller.getWorldPosition(position);
-    direction.applyQuaternion(controller.quaternion);
+    // 赤いレーザーと弾の弾道を一致させるため、まず銃口の実座標/向きを使う。
+    // 取得できない場合(モデル未ロード等)はコントローラーの向きにフォールバックする。
+    const muzzle = this.sceneManager?.getMuzzleTransform();
+    let position, direction;
+    if (muzzle) {
+      position  = muzzle.position;
+      direction = muzzle.direction;
+    } else {
+      position  = new THREE.Vector3();
+      direction = new THREE.Vector3(0, 0, -1);
+      controller.getWorldPosition(position);
+      direction.applyQuaternion(controller.quaternion);
+    }
     this._spawnBullet(position, direction);
     this._pulseHaptic(controller, 0.5, 40);
   }
@@ -347,10 +329,19 @@ export class Weapon {
 
   _fireFromCamera() {
     if (this._cooldown > 0) return;
-    const position  = new THREE.Vector3();
-    const direction = new THREE.Vector3(0, 0, -1);
-    this.camera.getWorldPosition(position);
-    direction.applyQuaternion(this.camera.quaternion);
+    // 赤いレーザーと弾の弾道を一致させるため、まず銃口の実座標/向きを使う。
+    // 取得できない場合(モデル未ロード等)はカメラの向きにフォールバックする。
+    const muzzle = this.sceneManager?.getMuzzleTransform();
+    let position, direction;
+    if (muzzle) {
+      position  = muzzle.position;
+      direction = muzzle.direction;
+    } else {
+      position  = new THREE.Vector3();
+      direction = new THREE.Vector3(0, 0, -1);
+      this.camera.getWorldPosition(position);
+      direction.applyQuaternion(this.camera.quaternion);
+    }
     this._spawnBullet(position, direction);
   }
 
@@ -403,6 +394,7 @@ export class Weapon {
     const damage = this._powerUp === 'power'
       ? Config.POWERUP.POWER_DAMAGE
       : 1;
+    const color = BULLET_COLORS[this._powerUp] ?? BULLET_COLORS.default;
 
     this._cooldown = cooldown;
     this._ammo--;
@@ -423,10 +415,10 @@ export class Weapon {
             (Math.random() - 0.5) * SPREAD * 2,
           ),
         ).normalize();
-        this._addBullet(position, spreadDir, damage);
+        this._addBullet(position, spreadDir, damage, color);
       }
     } else {
-      this._addBullet(position, direction, damage);
+      this._addBullet(position, direction, damage, color);
     }
 
     EventBus.emit('weapon:fired', { position: position.clone(), direction: direction.clone() });
@@ -438,25 +430,32 @@ export class Weapon {
    * @param {THREE.Vector3} position
    * @param {THREE.Vector3} direction
    * @param {number} damage
+   * @param {number} color 弾の発光色 (BULLET_COLORS 参照)
    */
-  _addBullet(position, direction, damage = 1) {
-    const mesh     = this._createBulletMesh();
+  _addBullet(position, direction, damage = 1, color = BULLET_COLORS.default) {
+    const mesh     = this._createBulletMesh(color);
     const velocity = direction.clone().normalize().multiplyScalar(Config.WEAPON.BULLET_SPEED);
     mesh.position.copy(position);
     this.scene.add(mesh);
 
-    // トレイル: 明るいコアライン + 薄いアウターラインで輝き感を出す
+    // トレイル: 加算合成の魔力光跡(明るいコア + 薄いグロウ)
     const trailPos = new Float32Array(TRAIL_MAX * 3);
     const trailGeo = new THREE.BufferGeometry();
     trailGeo.setAttribute('position', new THREE.BufferAttribute(trailPos, 3));
     trailGeo.setDrawRange(0, 0);
     const trailCore = new THREE.Line(
       trailGeo,
-      new THREE.LineBasicMaterial({ color: 0xffee88, transparent: true, opacity: 0.9 }),
+      new THREE.LineBasicMaterial({
+        color, transparent: true, opacity: 0.95,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
     );
     const trailOuter = new THREE.Line(
       trailGeo,
-      new THREE.LineBasicMaterial({ color: 0xff8800, transparent: true, opacity: 0.35 }),
+      new THREE.LineBasicMaterial({
+        color, transparent: true, opacity: 0.4,
+        blending: THREE.AdditiveBlending, depthWrite: false,
+      }),
     );
     const trail = new THREE.Group();
     trail.add(trailCore, trailOuter);
@@ -471,24 +470,44 @@ export class Weapon {
   }
 
   /**
-   * 弾メッシュを生成する
-   * FBX薬莢がロード済みであればそれを使用、未ロード時は黄金球にフォールバック
+   * 弾マテリアルを色ごとにキャッシュして取得する(共有・再利用)
+   * @param {number} color
    */
-  _createBulletMesh() {
-    if (this._bulletGeo && this._bulletMat) {
-      const mesh = new THREE.Mesh(this._bulletGeo, this._bulletMat);
-      mesh.castShadow = false;
-      // layout.json の weapon.scale (0.0002) と同じ倍率でピストルに揃える
-      mesh.scale.setScalar(0.0002);
-      return mesh;
+  _getBulletMaterials(color) {
+    let mats = this._bulletMatCache.get(color);
+    if (!mats) {
+      mats = {
+        // コア: 発光する魔力の芯
+        core: new THREE.MeshPhongMaterial({
+          color,
+          emissive: new THREE.Color(color),
+          emissiveIntensity: 1.2,
+          shininess: 200,
+        }),
+        // グロウ: 加算合成の外殻でハロー効果を出す
+        glow: new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity: 0.35,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false,
+        }),
+      };
+      this._bulletMatCache.set(color, mats);
     }
+    return mats;
+  }
 
-    // フォールバック: 金色の球
-    const mesh = new THREE.Mesh(
-      new THREE.SphereGeometry(0.012, 8, 8),
-      new THREE.MeshStandardMaterial({ color: 0xc8930a, roughness: 0.2, metalness: 0.9 }),
-    );
-    return mesh;
+  /**
+   * 弾メッシュを生成する: マジックミサイル風の発光オーブ(コア+グロウシェル)
+   * @param {number} color
+   */
+  _createBulletMesh(color) {
+    const { core, glow } = this._getBulletMaterials(color);
+    const group = new THREE.Group();
+    group.add(new THREE.Mesh(this._bulletCoreGeo, core));
+    group.add(new THREE.Mesh(this._bulletGlowGeo, glow));
+    return group;
   }
 
   /** トレイルをシーンから削除してリソースを解放する */
