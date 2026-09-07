@@ -188,12 +188,20 @@ class App {
     this._enemySpawner.stop();
     this._weapon.stop();
     this._hud.hide();
-    this._worldHUD.hide();
 
     for (const item of this._items) item.destroy();
     this._items = [];
 
     const wave = this._enemySpawner.wave;
+
+    // XR中はDOMオーバーレイのリザルト画面が見えにくいため、
+    // ワールドHUDパネルにも最終スコアを表示する(desktopでは不要なので隠す)
+    if (this._renderer.xr.isPresenting) {
+      this._worldHUD.showGameOver(this._score, wave);
+    } else {
+      this._worldHUD.hide();
+    }
+
     EventBus.emit('game:over', { finalScore: this._score, wave });
     setTimeout(() => this._menu.showResult(this._score, wave), 1000);
   }
@@ -400,6 +408,9 @@ class App {
       // アイテムを更新・期限切れを削除
       for (const item of this._items) item.update(delta);
       this._items = this._items.filter((i) => i.isActive);
+    } else if (this._state === STATE.GAMEOVER) {
+      // ゲームオーバー後もワールドHUDはカメラに追従させ、結果表示を描画し続ける
+      this._worldHUD.update(delta);
     }
   }
 }
