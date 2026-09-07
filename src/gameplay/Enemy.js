@@ -271,7 +271,23 @@ export class Enemy {
     });
     EventBus.emit('sound:play3d', { id: 'defeat', position: this.position });
 
-    // 吹き飛び初期化(アニメーション本体は _updateDying でゲームループ処理)
+    this._startDying();
+  }
+
+  /**
+   * スコアを加算せずにその場で消滅させる(ゲームオーバー時の一斉消滅用)
+   * @returns {boolean} 実際に消滅させたか
+   */
+  dissolve() {
+    if (!this.isActive) return false;
+    this.isDefeated = true;
+    this.isActive   = false;
+    this._startDying();
+    return true;
+  }
+
+  /** 吹き飛び初期化(アニメーション本体は _updateDying でゲームループ処理) */
+  _startDying() {
     this._dying        = true;
     this._dyingElapsed = 0;
     this._dyingVel.set(

@@ -63,6 +63,15 @@ export class EffectManager {
   }
 
 
+  /**
+   * 撃破バーストを任意の座標に出す(ゲームオーバー時の一斉消滅などで使う)
+   * @param {THREE.Vector3} position
+   */
+  spawnDefeatBurst(position) {
+    this._spawnDefeatBurst(position);
+  }
+
+
   // ============================================================
   // 毎フレーム更新
   // ============================================================

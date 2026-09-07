@@ -29,6 +29,17 @@ import Config from '../common/Config.js';
 
 const STATE = Object.freeze({ MENU: 'menu', PLAYING: 'playing', GAMEOVER: 'gameover' });
 
+/**
+ * 音声素材 (public/assets/audio)
+ * NOTE: 読み込みに失敗したIDは SoundManager のプロシージャル音に自動フォールバックする。
+ *       素材を差し替える場合はここのパスを書き換えるだけでよい。
+ */
+const AUDIO_FILES = {
+  'shoot':         '/assets/audio/拳銃を撃つ.mp3',
+  'shoot-shotgun': '/assets/audio/ショットガン発射.mp3',
+};
+const BGM_FILE = '/assets/audio/maou_bgm_fantasy12.mp3';
+
 class App {
   constructor() {
     this._state = STATE.MENU;
@@ -114,8 +125,25 @@ class App {
       this._postProcessing.setSize(window.innerWidth, window.innerHeight);
     });
 
+    this._loadAudioAssets();
     this._checkXRSupport();
     this._renderer.setAnimationLoop(this._onAnimationFrame.bind(this));
+  }
+
+  // ── 音声素材の読み込み ───────────────────────────────────
+
+  /**
+   * 音声ファイルをメニュー表示中にダウンロードしておく。
+   * AudioContext は init() 後に生成されるため、デコードは SoundManager 側で
+   * init() 時にまとめて行われる(ここでは待たない)。
+   */
+  _loadAudioAssets() {
+    // 日本語ファイル名をそのまま fetch できるようにURLエンコードする
+    const encoded = Object.fromEntries(
+      Object.entries(AUDIO_FILES).map(([id, url]) => [id, encodeURI(url)]),
+    );
+    this._soundManager.preload(encoded);
+    this._soundManager.setBGMFile(encodeURI(BGM_FILE));
   }
 
   // ── XR サポートチェック ──────────────────────────────────
@@ -202,6 +230,11 @@ class App {
     this._exitPointerLock();
     this._enemySpawner.stop();
     this._weapon.stop();
+    // 残った敵と発射中の弾を片付ける(そのままだと画面上で固まって見える)
+    for (const position of this._enemySpawner.dissolveAll()) {
+      this._effectManager.spawnDefeatBurst(position);
+    }
+    this._weapon.reset();
     this._hud.hide();
     this._worldHUD.hide();
 
@@ -393,13 +426,26 @@ class App {
   }
 
   _update(delta, frame) {
+    // ゲームオーバー後も、爆発エフェクトと敵の消滅アニメだけは最後まで再生する。
+    // ここで何も更新しないと、リザルト表示までの間だけ画面が固まって見えてしまう。
+    if (this._state === STATE.GAMEOVER) {
+      this._sceneManager.update(delta);
+      this._effectManager.update(delta);
+      this._sceneManager.camera.getWorldPosition(this._playerPos);
+      this._enemySpawner.update(delta, this._playerPos); // スポーンは stop() 済み
+      return;
+    }
+
     if (this._state === STATE.PLAYING) {
-      // ヒットポーズ中もリロードタイマーは継続する
+      // ヒットポーズ: 撃破の手応えを出すため、演出ごと数フレーム止める
       if (this._hitstopFrames > 0) {
         this._hitstopFrames--;
         this._weapon.update(delta); // リロードを継続するためにupdateは必ず呼ぶ
         return;
       }
+
+      this._sceneManager.update(delta);
+      this._effectManager.update(delta);
 
       // デスクトップ: マウスルックでカメラ回転
       if (this._isDesktopMode) {
@@ -410,8 +456,6 @@ class App {
 
       this._sceneManager.camera.getWorldPosition(this._playerPos);
 
-      this._sceneManager.update(delta);
-      this._effectManager.update(delta);
       this._weapon.update(delta);
       this._worldHUD.update(delta);
       this._enemySpawner.update(delta, this._playerPos);

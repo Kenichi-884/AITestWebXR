@@ -432,7 +432,10 @@ export class Weapon {
     }
 
     EventBus.emit('weapon:fired', { position: position.clone(), direction: direction.clone() });
-    EventBus.emit('sound:play', { id: 'shoot' });
+    // ショットガン中は専用の発射音を鳴らす(未登録なら 'shoot' にフォールバック)
+    EventBus.emit('sound:play', {
+      id: this._powerUp === 'shotgun' ? 'shoot-shotgun' : 'shoot',
+    });
   }
 
   /**

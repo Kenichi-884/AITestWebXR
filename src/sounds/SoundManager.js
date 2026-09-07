@@ -12,6 +12,7 @@
  *
  * サウンドID一覧:
  *   'shoot'      - 射撃(ロケットランチャー)  (Weapon.js から発火)
+ *   'shoot-shotgun' - ショットガン射撃 (未登録時は 'shoot' にフォールバック)
  *   'hit'        - 着弾(小さめの炸裂)        (Enemy.js から発火)
  *   'defeat'     - 撃破(爆発)               (Enemy.js から発火)
  *   'player-hit' - プレイヤーがダメージ      (Enemy.js から発火)
@@ -62,6 +63,15 @@ const SOUND_CONFIG = {
   MAX_VOICES:        32,     // 同時発音数の上限(連射時の音割れ防止)
 };
 
+/**
+ * サウンドIDの別名。
+ * 専用の音声ファイルが登録されていないIDは、ここで指定した本家IDの
+ * ファイル/プロシージャル音にフォールバックする。
+ */
+const SOUND_ALIASES = {
+  'shoot-shotgun': 'shoot',
+};
+
 /** BGMのルート音(A1)と、使用するスケール(マイナーペンタトニック) */
 const BGM_ROOT_HZ = 55;
 const BGM_SCALE = [0, 3, 5, 7, 10];
@@ -99,6 +109,7 @@ export class SoundManager {
     this._bgmStep = 0;
     this._bgmNextTime = 0;
     this._bgmBuffer = null;       // 音声ファイルBGMを使う場合のバッファ
+    this._pendingBGM = null;      // init前にsetBGMFile()された生データ
     this._bgmSource = null;       // 同上の再生ノード
     this._bgmPlaying = false;
 
@@ -206,14 +217,15 @@ export class SoundManager {
    */
   play(id) {
     if (!this._initialized || !this._ctx || this._muted) return;
+    const rid = this._resolveId(id);
 
     // 音声ファイルが登録されていればそちらを優先する
-    if (this._buffers.has(id)) {
-      this._playBuffer(this._buffers.get(id), this._volumeForId(id));
+    if (this._buffers.has(rid)) {
+      this._playBuffer(this._buffers.get(rid), this._volumeForId(rid));
       return;
     }
 
-    const layers = this._soundDefs[id];
+    const layers = this._soundDefs[rid];
     if (!layers) {
       console.warn(`[SoundManager] 未定義のサウンドID: "${id}"`);
       return;
@@ -232,6 +244,7 @@ export class SoundManager {
    */
   playAt(id, position) {
     if (!this._initialized || !this._ctx || this._muted) return;
+    const rid = this._resolveId(id);
 
     const panner = this._ctx.createPanner();
     panner.panningModel  = 'HRTF';      // バイノーラル空間音響
@@ -252,12 +265,12 @@ export class SoundManager {
     // コンプレッサー手前に接続(スフィアゲインを通さず直接)
     panner.connect(this._sfxComp);
 
-    if (this._buffers.has(id)) {
-      this._playBuffer(this._buffers.get(id), this._volumeForId(id), panner);
+    if (this._buffers.has(rid)) {
+      this._playBuffer(this._buffers.get(rid), this._volumeForId(rid), panner);
       return;
     }
 
-    const layers = this._soundDefs[id];
+    const layers = this._soundDefs[rid];
     if (!layers) {
       console.warn(`[SoundManager] 未定義のサウンドID: "${id}"`);
       return;
@@ -533,11 +546,23 @@ export class SoundManager {
     };
   }
 
+  /**
+   * 実際に鳴らすサウンドIDを決める。
+   * 専用ファイルが未登録のエイリアスIDは本家IDに読み替える。
+   * @param {string} id
+   * @returns {string}
+   */
+  _resolveId(id) {
+    if (this._buffers.has(id)) return id;
+    return SOUND_ALIASES[id] ?? id;
+  }
+
   /** 音声ファイル再生時に使う、IDごとの音量 */
   _volumeForId(id) {
     const V = Config.SOUND;
     switch (id) {
-      case 'shoot':      return V.SHOOT_VOLUME;
+      case 'shoot':         return V.SHOOT_VOLUME;
+      case 'shoot-shotgun': return V.SHOOT_VOLUME;
       case 'hit':        return V.HIT_VOLUME;
       case 'defeat':     return V.DEFEAT_VOLUME;
       case 'player-hit': return V.PLAYER_HIT_VOLUME;
@@ -855,6 +880,8 @@ export class SoundManager {
   /**
    * BGMを音声ファイルに差し替える(ループ再生)。
    * 次に game:start が来たタイミングから適用される。
+   *
+   * NOTE: init() 前に呼んでもよい(ダウンロードだけ先に行い、init時にデコードする)
    * @param {string} url
    * @returns {Promise<void>}
    */
@@ -862,7 +889,7 @@ export class SoundManager {
     try {
       const arrayBuffer = await this._fetchAudio(url);
       if (!this._ctx) {
-        console.warn('[SoundManager] setBGMFile は init() 後に呼んでください');
+        this._pendingBGM = arrayBuffer;
         return;
       }
       this._bgmBuffer = await this._ctx.decodeAudioData(arrayBuffer);
@@ -884,9 +911,10 @@ export class SoundManager {
     return response.arrayBuffer();
   }
 
-  /** init() 前に preload されていたデータをデコードする */
+  /** init() 前に preload / setBGMFile されていたデータをデコードする */
   async _flushPendingBuffers() {
-    if (this._pendingBuffers.size === 0 || !this._ctx) return;
+    if (!this._ctx) return;
+
     const pending = [...this._pendingBuffers.entries()];
     this._pendingBuffers.clear();
     for (const [id, arrayBuffer] of pending) {
@@ -894,6 +922,18 @@ export class SoundManager {
         this._buffers.set(id, await this._ctx.decodeAudioData(arrayBuffer));
       } catch (e) {
         console.warn(`[SoundManager] 音声ファイルのデコード失敗 "${id}":`, e);
+      }
+    }
+
+    if (this._pendingBGM) {
+      const arrayBuffer = this._pendingBGM;
+      this._pendingBGM = null;
+      try {
+        this._bgmBuffer = await this._ctx.decodeAudioData(arrayBuffer);
+        // init直後に game:start でプロシージャルBGMが鳴り始めていたら差し替える
+        if (this._bgmPlaying) this._startBGM();
+      } catch (e) {
+        console.warn('[SoundManager] BGMファイルのデコード失敗:', e);
       }
     }
   }
@@ -954,6 +994,7 @@ export class SoundManager {
     this._stopBGM({ immediate: true });
     this._buffers.clear();
     this._pendingBuffers.clear();
+    this._pendingBGM = null;
     try { this._ctx?.close(); } catch (_) {}
     this._ctx = null;
     this._initialized = false;

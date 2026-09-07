@@ -66,21 +66,37 @@ export class EnemySpawner {
    * @param {THREE.Vector3} playerPosition
    */
   update(delta, playerPosition) {
-    if (!this._isActive) return;
-
-    // スポーンタイマー
-    this._spawnTimer += delta;
-    if (this._spawnTimer >= this._spawnInterval) {
-      this._spawnTimer = 0;
-      this._spawnEnemy(playerPosition);
+    // スポーンタイマー(停止中は新しい敵を出さない)
+    if (this._isActive) {
+      this._spawnTimer += delta;
+      if (this._spawnTimer >= this._spawnInterval) {
+        this._spawnTimer = 0;
+        this._spawnEnemy(playerPosition);
+      }
     }
 
     // 各敵の更新 (isActive=通常動作, _dying=撃破後アニメーション)
+    // NOTE: 撃破アニメだけは停止中も進める。ゲームオーバー直後に
+    //       敵が空中で固まったままになるのを防ぐため。
     for (const enemy of this._enemies) {
-      if (enemy.isActive || enemy._dying) {
+      if ((this._isActive && enemy.isActive) || enemy._dying) {
         enemy.update(delta, playerPosition);
       }
     }
+  }
+
+  /**
+   * 残っている敵をその場で消滅させる(ゲームオーバー演出用)
+   * スコアは加算せず、撃破アニメーションだけ再生する。
+   * @returns {THREE.Vector3[]} 消滅した敵の位置(エフェクト用)
+   */
+  dissolveAll() {
+    const positions = [];
+    for (const enemy of this._enemies) {
+      const position = enemy.position.clone();
+      if (enemy.dissolve()) positions.push(position);
+    }
+    return positions;
   }
 
   /**

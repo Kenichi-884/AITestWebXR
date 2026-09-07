@@ -284,6 +284,12 @@ export class EnemyDrone extends Enemy {
     this._clearProjectiles();
   }
 
+  dissolve() {
+    const dissolved = super.dissolve();
+    if (dissolved) this._clearProjectiles();
+    return dissolved;
+  }
+
   _onReachPlayer() {
     super._onReachPlayer();
     this._clearProjectiles();
