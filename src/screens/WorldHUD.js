@@ -51,6 +51,13 @@ export class WorldHUD {
     this._blinkT    = 0;       // リロード点滅用タイマー
     this._damageFlashT = 0;    // ダメージフラッシュタイマー (秒)
 
+    // ── ゲームオーバー表示 ──────────────────────────────────
+    // XR中はDOMオーバーレイ(#result-screen)が見えにくいため、
+    // 最終スコアもこのワールドHUDパネルに描画して確実に見せる。
+    this._gameOverMode  = false;
+    this._finalScore    = 0;
+    this._finalWave     = 1;
+
     // ── Canvas ──────────────────────────────────────────────
     this._canvas = document.createElement('canvas');
     this._canvas.width  = CW;
@@ -100,12 +107,27 @@ export class WorldHUD {
   // ── ライフサイクル ─────────────────────────────────────────
 
   show() {
+    this._gameOverMode = false;
     this._mesh.visible = true;
     this._dirty        = true;
   }
 
   hide() {
     this._mesh.visible = false;
+  }
+
+  /**
+   * ゲームオーバー時に最終スコアを表示する(XR中はDOMのリザルト画面が
+   * 見えにくいため、こちらのワールドHUDパネルを使い続けて確実に見せる)
+   * @param {number} score
+   * @param {number} wave
+   */
+  showGameOver(score, wave) {
+    this._gameOverMode = true;
+    this._finalScore   = score;
+    this._finalWave    = wave;
+    this._mesh.visible = true;
+    this._dirty        = true;
   }
 
   /** @param {number} delta */
@@ -149,6 +171,11 @@ export class WorldHUD {
   // ── 描画 ───────────────────────────────────────────────────
 
   _draw() {
+    if (this._gameOverMode) {
+      this._drawGameOver();
+      return;
+    }
+
     const ctx = this._ctx;
     ctx.clearRect(0, 0, CW, CH);
 
@@ -331,6 +358,49 @@ export class WorldHUD {
     this._texture.needsUpdate = true;
   }
 
+  /** ゲームオーバー時: 最終スコア・到達ウェーブを表示 */
+  _drawGameOver() {
+    const ctx = this._ctx;
+    ctx.clearRect(0, 0, CW, CH);
+
+    ctx.fillStyle = 'rgba(2, 8, 24, 0.90)';
+    this._rrect(ctx, 2, 2, CW - 4, CH - 4, 12);
+    ctx.fill();
+
+    ctx.strokeStyle = 'rgba(255,45,85,0.55)';
+    ctx.lineWidth = 2;
+    this._rrect(ctx, 2, 2, CW - 4, CH - 4, 12);
+    ctx.stroke();
+
+    this._glowLine(ctx, 0, 3, CW, 3, 3, 'rgba(255,45,85,0.75)');
+
+    ctx.textAlign    = 'center';
+    ctx.textBaseline = 'top';
+
+    ctx.font        = 'bold 20px monospace';
+    ctx.fillStyle   = '#ff2d55';
+    ctx.shadowColor = '#ff2d55';
+    ctx.shadowBlur  = 10;
+    ctx.fillText('GAME OVER', CW / 2, 18);
+    ctx.shadowBlur  = 0;
+
+    this._label(ctx, 'SCORE', CW / 2, 56);
+    ctx.font        = 'bold 44px monospace';
+    ctx.fillStyle   = '#ffffff';
+    ctx.shadowColor = '#ffffff';
+    ctx.shadowBlur  = 8;
+    ctx.textAlign   = 'center';
+    ctx.fillText(this._finalScore.toLocaleString(), CW / 2, 70);
+    ctx.shadowBlur  = 0;
+
+    ctx.font      = '600 13px monospace';
+    ctx.fillStyle = 'rgba(180,210,230,0.75)';
+    ctx.textAlign = 'center';
+    ctx.fillText(`WAVE ${this._finalWave} まで到達`, CW / 2, 130);
+
+    this._texture.needsUpdate = true;
+  }
+
   // ── 描画ヘルパー ───────────────────────────────────────────
 
   _label(ctx, text, x, y, align) {
@@ -388,6 +458,7 @@ export class WorldHUD {
     this._powerUp        = null;
     this._powerUpDuration = 0;
     this._damageFlashT   = 0;
+    this._gameOverMode   = false;
     this._dirty          = true;
   }
 }
