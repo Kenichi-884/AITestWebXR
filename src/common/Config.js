@@ -15,6 +15,7 @@ const Config = Object.freeze({
   PLAYER: {
     MAX_HEALTH: 100,          // 最大HP
     DAMAGE_PER_ENEMY: 25,     // 敵1体に到達されたときのダメージ
+    SCORE_PER_DEATH: 100,     // 死亡時に減るスコア(0未満にはならない)
   },
 
   // ----- 敵 -----

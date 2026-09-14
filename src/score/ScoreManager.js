@@ -24,12 +24,14 @@
  *   enemy:defeated      - コンボ加算 + コンボボーナス計算
  *   enemy:reached-player- 被弾でコンボが途切れる
  *   game:wave-update    - ウェーブ突破ボーナス / ノーダメージボーナス
- *   game:over           - ランク・称号を判定してリザルト画面に表示
+ *   game:health-update  - 直近HPを保持(死亡判定用)
+ *   game:over           - ランク・称号を判定してリザルト画面に表示 / HP0なら死亡数+1
  *
  * 発火するイベント(他の担当が拾えるように用意):
  *   score:combo-update  - コンボ更新   { combo, multiplier }
  *   score:bonus         - ボーナス獲得 { points, reason, total }
- *   score:rank          - ランク確定   { rank, title, baseScore, bonus, total, maxCombo }
+ *   score:stats-update  - 撃破/死亡数更新 { kills, deaths, totalKills, totalDeaths, plays }
+ *   score:rank          - ランク確定   { rank, title, baseScore, bonus, total, maxCombo, kills, deaths }
  *
  * このファイルで触るもの: このファイル + index.html の <script> 1行のみ
  * ============================================================
@@ -49,6 +51,9 @@ const SCORE_CONFIG = {
 
   POPUP_LIFETIME_MS:    900,   // ボーナス表示が消えるまで(ミリ秒)
 };
+
+/** 通算記録(撃破数・死亡数)の保存キー */
+const STATS_STORAGE_KEY = 'aitestwebxr:score-stats';
 
 /**
  * ランクと称号。min は「基本スコア + ボーナス」の合計に対するしきい値。
@@ -73,6 +78,13 @@ class ScoreManagerClass {
     this._damagedThisWave = false;
     this._wave = 1;
 
+    // 撃破数・死亡数の記録
+    this._playing = false;
+    this._health = null;     // 直近のHP(game:over が死亡によるものか判定する)
+    this._kills = 0;         // 今回のプレイの撃破数
+    this._deaths = 0;        // 今回のプレイの死亡数
+    this._stats = this._loadStats(); // 通算 { totalKills, totalDeaths, plays }
+
     this._styleInjected = false;
     this._comboEl = null;
     this._rankEl = null;
@@ -81,6 +93,7 @@ class ScoreManagerClass {
     EventBus.on('enemy:defeated', (data) => this._onDefeated(data));
     EventBus.on('enemy:reached-player', () => this._onPlayerHit());
     EventBus.on('game:wave-update', ({ wave }) => this._onWaveUpdate(wave));
+    EventBus.on('game:health-update', ({ health }) => { this._health = health; });
     EventBus.on('game:over', (data) => this._onGameOver(data));
   }
 
@@ -89,6 +102,17 @@ class ScoreManagerClass {
   get combo() { return this._combo; }
   get maxCombo() { return this._maxCombo; }
   get bonusTotal() { return this._bonusTotal; }
+  get kills() { return this._kills; }
+  get deaths() { return this._deaths; }
+  /** 通算記録のコピー { totalKills, totalDeaths, plays } */
+  get stats() { return { ...this._stats }; }
+
+  /** 通算記録を消す(デバッグ・設定画面用) */
+  resetStats() {
+    this._stats = { totalKills: 0, totalDeaths: 0, plays: 0 };
+    this._saveStats();
+    EventBus.emit('score:stats-update', this._statsPayload());
+  }
 
   /** 現在のコンボ倍率 */
   get multiplier() {
@@ -105,9 +129,13 @@ class ScoreManagerClass {
     this._bonusTotal = 0;
     this._damagedThisWave = false;
     this._wave = 1;
+    this._playing = true;
+    this._kills = 0;
+    this._deaths = 0;
     this._clearComboTimer();
     this._hideCombo();
     this._removeRankPanel();
+    EventBus.emit('score:stats-update', this._statsPayload());
   }
 
   /**
@@ -115,6 +143,12 @@ class ScoreManagerClass {
    * @param {{ score: number }} data App.js が基本スコアに加算するのと同じ値
    */
   _onDefeated({ score = 0 } = {}) {
+    // ゲームオーバー後の片付け等で飛んできた分は数えない
+    if (!this._playing) return;
+    this._kills++;
+    this._stats.totalKills++;
+    EventBus.emit('score:stats-update', this._statsPayload());
+
     this._combo++;
     if (this._combo > this._maxCombo) this._maxCombo = this._combo;
 
@@ -160,9 +194,20 @@ class ScoreManagerClass {
 
   /** ゲーム終了: 合計からランクを決めてリザルト画面に差し込む */
   _onGameOver({ finalScore = 0 } = {}) {
+    if (!this._playing) return;
+    this._playing = false;
     this._clearComboTimer();
     this._combo = 0;
     this._hideCombo();
+
+    // HP0 で終わった場合のみ死亡扱い(XRセッションを閉じただけの終了は含めない)
+    if (this._health !== null && this._health <= 0) {
+      this._deaths++;
+      this._stats.totalDeaths++;
+    }
+    this._stats.plays++;
+    this._saveStats();
+    EventBus.emit('score:stats-update', this._statsPayload());
 
     const total = finalScore + this._bonusTotal;
     const entry = RANKS.find((r) => total >= r.min) ?? RANKS[RANKS.length - 1];
@@ -174,6 +219,8 @@ class ScoreManagerClass {
       bonus: this._bonusTotal,
       total,
       maxCombo: this._maxCombo,
+      kills: this._kills,
+      deaths: this._deaths,
     });
 
     this._renderRankPanel(entry, finalScore, total);
@@ -185,6 +232,33 @@ class ScoreManagerClass {
     this._bonusTotal += points;
     EventBus.emit('score:bonus', { points, reason, total: this._bonusTotal });
     this._showBonusPopup(points, reason);
+  }
+
+  _statsPayload() {
+    return {
+      kills: this._kills,
+      deaths: this._deaths,
+      totalKills: this._stats.totalKills,
+      totalDeaths: this._stats.totalDeaths,
+      plays: this._stats.plays,
+    };
+  }
+
+  /** 通算記録を読み込む。localStorage が使えない環境では0から */
+  _loadStats() {
+    const empty = { totalKills: 0, totalDeaths: 0, plays: 0 };
+    try {
+      const saved = JSON.parse(localStorage.getItem(STATS_STORAGE_KEY) ?? 'null');
+      return { ...empty, ...saved };
+    } catch (_) {
+      return empty;
+    }
+  }
+
+  _saveStats() {
+    try {
+      localStorage.setItem(STATS_STORAGE_KEY, JSON.stringify(this._stats));
+    } catch (_) {}
   }
 
   _breakCombo() {
@@ -321,7 +395,8 @@ class ScoreManagerClass {
       `<div class="sr-detail">` +
         `基本 ${baseScore.toLocaleString()} + ボーナス ${this._bonusTotal.toLocaleString()}` +
         ` = <strong>${total.toLocaleString()}</strong><br>` +
-        `最大コンボ ${this._maxCombo}` +
+        `最大コンボ ${this._maxCombo}　撃破 ${this._kills}　死亡 ${this._deaths}<br>` +
+        `通算 撃破 ${this._stats.totalKills}　死亡 ${this._stats.totalDeaths}` +
       `</div>`;
 
     // 「もう一度」ボタンの直前に入れる(無ければ末尾)

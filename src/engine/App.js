@@ -97,10 +97,11 @@ class App {
     this._items = [];
 
     // ── EventBus ────────────────────────────────────────────
-    EventBus.on('enemy:defeated', ({ enemy, score }) => {
+    EventBus.on('enemy:defeated', ({ enemy }) => {
       this._hitstopFrames = 3;
       this._registerCombo();
-      this._addScore(Math.round(score * this._comboMultiplier()), this._comboMultiplier());
+      // 1体撃破で一律 SCORE_PER_KILL(100)点
+      this._addScore(Config.ENEMY.SCORE_PER_KILL);
       this._tryDropItem(enemy);
     });
     EventBus.on('item:collected', ({ type }) => {
@@ -128,6 +129,12 @@ class App {
     window.addEventListener('resize', () => {
       this._postProcessing.setSize(window.innerWidth, window.innerHeight);
     });
+
+    // PCテストモード(URLに ?debug を付けたときだけ)
+    this._debug = null;
+    if (new URLSearchParams(window.location.search).has('debug')) {
+      import('../debug/DebugMode.js').then(({ DebugMode }) => { this._debug = new DebugMode(this); });
+    }
 
     this._loadAudioAssets();
     this._checkXRSupport();
@@ -306,7 +313,10 @@ class App {
   // ── スコア / ダメージ ────────────────────────────────────
 
   _addScore(delta, multiplier = 1) {
-    this._score += delta;
+    // スコアはマイナスにしない。delta は実際に増減した値にそろえる
+    const next = Math.max(0, this._score + delta);
+    delta = next - this._score;
+    this._score = next;
     EventBus.emit('game:score-update', { score: this._score, delta, multiplier });
   }
 
@@ -347,9 +357,15 @@ class App {
   }
 
   _applyDamage(damage) {
+    if (this._state !== STATE.PLAYING) return;
+    if (this._debug?.invincible) return;
     this._health = Math.max(0, this._health - damage);
     EventBus.emit('game:health-update', { health: this._health, maxHealth: Config.PLAYER.MAX_HEALTH });
-    if (this._health <= 0) this._endGame();
+    if (this._health <= 0) {
+      // 死亡ペナルティ(死亡数の記録は ScoreManager が game:over で行う)
+      this._addScore(-Config.PLAYER.SCORE_PER_DEATH);
+      this._endGame();
+    }
   }
 
   // ── デスクトップ: マウスルック ────────────────────────────
