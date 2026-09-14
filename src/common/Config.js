@@ -36,7 +36,7 @@ const Config = Object.freeze({
   // ----- ドローン(敵) -----
   DRONE: {
     STANDOFF_RADIUS: 3.0,        // この距離まで近づいたら停止し、以降は射撃のみ行う (m)
-    FIRE_INTERVAL: 1.6,          // 射撃間隔 (秒)
+    FIRE_INTERVAL: 2.2,          // 射撃間隔 (秒)
     PROJECTILE_SPEED: 6.0,       // 弾速 (m/s)
     PROJECTILE_LIFETIME: 4.0,    // 弾が消えるまでの時間 (秒)
     PROJECTILE_RADIUS: 0.07,     // 弾の見た目サイズ (m)
@@ -50,11 +50,11 @@ const Config = Object.freeze({
 
   // ----- スポーナー -----
   SPAWNER: {
-    BASE_INTERVAL: 1.8,       // 初期スポーン間隔 (秒)
-    MIN_INTERVAL: 0.4,        // スポーン間隔の最小値 (秒)
-    INTERVAL_DECAY: 0.2,      // ウェーブごとに間隔を短縮する秒数
+    BASE_INTERVAL: 2.6,       // 初期スポーン間隔 (秒)
+    MIN_INTERVAL: 0.9,        // スポーン間隔の最小値 (秒)
+    INTERVAL_DECAY: 0.15,     // ウェーブごとに間隔を短縮する秒数
     ENEMIES_PER_WAVE: 15,     // 1ウェーブあたりの撃破目標数
-    MAX_ACTIVE_ENEMIES: 15,   // 同時出現上限(負荷制御)
+    MAX_ACTIVE_ENEMIES: 8,    // 同時出現上限(負荷制御)
   },
 
   // ----- パワーアップアイテム -----

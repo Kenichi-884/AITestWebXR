@@ -48,6 +48,10 @@ export class SceneManager {
     this._controllerRays = [];
     /** @type {THREE.Line|null} 武器モデルの子として銃口に追従するレーザー */
     this._muzzleRay = null;
+    /** @type {THREE.Vector3|null} 銃口位置(武器モデルローカル座標) */
+    this._muzzleLocalStart = null;
+    /** @type {THREE.Vector3|null} 銃口の向き(武器モデルローカル座標) */
+    this._muzzleLocalDir = null;
 
     // デスクトップ用: カメラに追従する武器ホルダー
     this._desktopWeaponHolder = new THREE.Group();
@@ -137,6 +141,10 @@ export class SceneManager {
 
     const start = new THREE.Vector3(...off.position);
     const dir = new THREE.Vector3(...off.direction).normalize();
+    // 弾の発射元/方向をレーザーと確実に一致させるため、ローカル座標を保持しておく
+    // (Weapon.js の getMuzzleTransform() から参照される)
+    this._muzzleLocalStart = start.clone();
+    this._muzzleLocalDir = dir.clone();
     // レイの長さ(ローカル単位): 現在のscaleでワールド換算 約10mになるよう逆算
     const scale = weaponConfig.xr?.scale?.[0] || 1;
     const end = start.clone().addScaledVector(dir, 10 / scale);
@@ -155,6 +163,26 @@ export class SceneManager {
       this._controllers[handIndex]?.remove(oldRay);
       this._controllerRays[handIndex] = null;
     }
+  }
+
+  /**
+   * 銃口レーザーと同じ発射元・方向をワールド座標で返す(Weapon.js が弾の発射に使う)。
+   * これにより弾の弾道が赤いレーザーの軌道と常に一致する。
+   * @returns {{ position: THREE.Vector3, direction: THREE.Vector3 } | null}
+   */
+  getMuzzleTransform() {
+    if (!this.weaponModel || !this._muzzleLocalStart) return null;
+
+    const position = this._muzzleLocalStart.clone();
+    this.weaponModel.localToWorld(position);
+
+    // 方向ベクトルは、始点から方向へわずかに進んだ点をワールド変換して差分を取ることで求める
+    // (localToWorld は平行移動を含むため、方向ベクトルへ直接は使えない)
+    const tip = this._muzzleLocalStart.clone().addScaledVector(this._muzzleLocalDir, 0.01);
+    this.weaponModel.localToWorld(tip);
+    const direction = tip.sub(position).normalize();
+
+    return { position, direction };
   }
 
   // ─── 武器モード切替 (App.js から呼ぶ) ────────────────────
