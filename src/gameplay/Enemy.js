@@ -15,8 +15,82 @@
  */
 
 import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import EventBus from '../common/EventBus.js';
 import Config from '../common/Config.js';
+
+// ── 敵モデル ────────────────────────────────────────────────
+/** 3Dモデルの場所。差し替えるときはここを変える */
+const MODEL_URL = '/assets/enemy/monster.glb';
+/** ゲーム内での敵の高さ(m)。大きすぎると当たり判定とズレるので注意 */
+const MODEL_HEIGHT = 0.55;
+
+/**
+ * 自発光の強さ。
+ * モデルはテクスチャを潰さないよう弱め、簡易図形はネオン感を出すため強めにする。
+ * 個体ごとの基準値は mesh.userData.baseEmissive に持たせる。
+ */
+const MODEL_EMISSIVE    = 0.15;
+const FALLBACK_EMISSIVE = 0.8;
+const HIT_EMISSIVE      = 1.2;
+
+/**
+ * 全個体で共有するモデルのテンプレート { geometry, material }。
+ * ジオメトリは共有し、マテリアルだけ個体ごとに複製する。
+ * (ヒット時の発光を個別に変えるためマテリアルは共有できない)
+ * @type {{geometry: THREE.BufferGeometry, material: THREE.Material}|null}
+ */
+let _template = null;
+let _loadPromise = null;
+
+/**
+ * 敵モデルを読み込んで共有テンプレートを作る。
+ * 読み込みに失敗しても例外は投げず、簡易図形にフォールバックする。
+ * @returns {Promise<object|null>}
+ */
+function loadEnemyModel() {
+  if (_loadPromise) return _loadPromise;
+
+  _loadPromise = new GLTFLoader().loadAsync(MODEL_URL).then((gltf) => {
+    let source = null;
+    gltf.scene.traverse((o) => { if (!source && o.isMesh) source = o; });
+    if (!source) throw new Error('GLB内にメッシュが見つかりません');
+
+    // GLB内の階層変換を焼き込んでから、ゲーム内のサイズに正規化する
+    source.updateWorldMatrix(true, false);
+    const geometry = source.geometry.clone();
+    geometry.applyMatrix4(source.matrixWorld);
+
+    geometry.computeBoundingBox();
+    const size = new THREE.Vector3();
+    geometry.boundingBox.getSize(size);
+    const scale = MODEL_HEIGHT / (size.y || 1);
+    geometry.scale(scale, scale, scale);
+
+    // 原点を中心に揃える。スポーン位置は空中なので、足元基準のままだと
+    // 見た目と当たり判定の中心がズレる
+    geometry.computeBoundingBox();
+    const center = new THREE.Vector3();
+    geometry.boundingBox.getCenter(center);
+    geometry.translate(-center.x, -center.y, -center.z);
+    geometry.computeBoundingSphere();
+
+    _template = { geometry, material: source.material };
+    return _template;
+  }).catch((e) => {
+    console.warn(
+      `[Enemy] 敵モデルを読み込めませんでした: ${MODEL_URL}`, e,
+      '\n簡易図形で代用します(ゲームは通常どおり動きます)。',
+    );
+    _template = null;
+    return null;
+  });
+
+  return _loadPromise;
+}
+
+// 最初の敵が出る前に間に合わせるため、モジュール読み込み時に先読みを開始する
+loadEnemyModel();
 
 export class Enemy {
   /**
@@ -69,6 +143,59 @@ export class Enemy {
     const hue = (this.wave * 0.15) % 1.0;
     const color = new THREE.Color().setHSL(hue, 1.0, 0.55);
 
+    // モデルの読み込みが間に合っていればそれを使い、間に合わなければ簡易図形
+    return _template ? this._createModelMesh(color) : this._createFallbackMesh(color);
+  }
+
+  /**
+   * ウェーブに応じた見た目をマテリアルに反映する。
+   * 生成時と reset() の両方から呼ぶので、ここだけ直せば両方に効く。
+   * @param {THREE.Material} material
+   * @param {THREE.Color} color
+   * @param {boolean} isModel 3Dモデルかどうか
+   */
+  _applyWaveLook(material, color, isModel) {
+    if (isModel) {
+      // モデルは本来のテクスチャを活かしたいので、色は白のまま。
+      // ウェーブの違いは自発光の色味だけで表現する。
+      material.color.set(0xffffff);
+      material.emissive.set(color);
+      material.emissiveIntensity = MODEL_EMISSIVE;
+      material.opacity = 1.0;
+    } else {
+      material.color.set(color);
+      material.emissive.set(color);
+      material.emissiveIntensity = FALLBACK_EMISSIVE;
+      material.opacity = 0.88;
+    }
+  }
+
+  /**
+   * 3Dモデルから敵のメッシュを作る
+   * ジオメトリは全個体で共有し、マテリアルだけ複製する
+   * @param {THREE.Color} color ウェーブに応じた色
+   */
+  _createModelMesh(color) {
+    const material = _template.material.clone();
+    material.emissive = new THREE.Color(0x000000);   // _applyWaveLook で設定する
+    material.transparent = true;                     // 撃破時のフェードアウトで使う
+    this._applyWaveLook(material, color, true);
+
+    const mesh = new THREE.Mesh(_template.geometry, material);
+    mesh.castShadow = true;
+    mesh.userData.baseEmissive = MODEL_EMISSIVE;
+    // destroy() で共有ジオメトリを破棄しないための目印
+    mesh.userData.sharedGeometry = true;
+    // update() の回転処理を「回転」ではなく「プレイヤーを向く」に切り替えるための目印
+    mesh.userData.isModel = true;
+    return mesh;
+  }
+
+  /**
+   * モデルが使えないときの簡易図形(従来の見た目)
+   * @param {THREE.Color} color
+   */
+  _createFallbackMesh(color) {
     // ウェーブ段階に応じてジオメトリ・サイズを変える
     let geometry;
     if (this.wave <= 2) {
@@ -83,7 +210,7 @@ export class Enemy {
     const material = new THREE.MeshPhongMaterial({
       color,
       emissive: color,
-      emissiveIntensity: 0.8,
+      emissiveIntensity: FALLBACK_EMISSIVE,
       shininess: 150,
       specular: new THREE.Color(0xffffff),
       transparent: true,
@@ -92,6 +219,7 @@ export class Enemy {
 
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
+    mesh.userData.baseEmissive = FALLBACK_EMISSIVE;
 
     // ワイヤーフレームオーバーレイ: サイバーパンク風の縁取り
     const wireMat = new THREE.MeshBasicMaterial({
@@ -135,14 +263,20 @@ export class Enemy {
     this.mesh.position.addScaledVector(this._direction, this.speed * delta);
 
     // ---- 回転演出 ----
-    this.mesh.rotation.x += delta * 1.5;
-    this.mesh.rotation.y += delta * 2.0;
+    if (this.mesh.userData.isModel) {
+      // モデルは回すと転がって見えるので、プレイヤーの方を向かせて上下に揺らす
+      this.mesh.lookAt(playerPosition);
+      this.mesh.rotation.z = Math.sin(performance.now() * 0.004) * 0.08;
+    } else {
+      this.mesh.rotation.x += delta * 1.5;
+      this.mesh.rotation.y += delta * 2.0;
+    }
 
     // ---- ヒットフラッシュ解除 ----
     if (this._hitFlashTimer > 0) {
       this._hitFlashTimer -= delta;
       if (this._hitFlashTimer <= 0) {
-        this.mesh.material.emissiveIntensity = 0.8;
+        this.mesh.material.emissiveIntensity = this.mesh.userData.baseEmissive ?? MODEL_EMISSIVE;
       }
     }
 
@@ -163,7 +297,7 @@ export class Enemy {
     EventBus.emit('sound:play', { id: 'hit' });
 
     // ヒットフラッシュ
-    this.mesh.material.emissiveIntensity = 1.0;
+    this.mesh.material.emissiveIntensity = HIT_EMISSIVE;
     this._hitFlashTimer = 0.1;
 
     if (this.hp <= 0) {
@@ -269,10 +403,7 @@ export class Enemy {
     // ウェーブに応じた色を更新(ソリッド + ワイヤーフレーム両方)
     const hue = (this.wave * 0.15) % 1.0;
     const color = new THREE.Color().setHSL(hue, 1.0, 0.55);
-    this.mesh.material.color.set(color);
-    this.mesh.material.emissive.set(color);
-    this.mesh.material.emissiveIntensity = 0.8;
-    this.mesh.material.opacity = 0.88; // 透明度をリセット
+    this._applyWaveLook(this.mesh.material, color, !!this.mesh.userData.isModel);
     const wire = this.mesh.children[0];
     if (wire) {
       wire.material.color.set(color);
@@ -289,7 +420,9 @@ export class Enemy {
   destroy() {
     this._dying = false; // 吹き飛びアニメーションをキャンセル
     if (this.mesh.parent) this.scene.remove(this.mesh);
-    this.mesh.geometry.dispose();
+    // モデルのジオメトリは全個体で共有しているので破棄してはいけない
+    // (1体の撃破で他の敵のジオメトリまで壊れてしまう)
+    if (!this.mesh.userData.sharedGeometry) this.mesh.geometry.dispose();
     this.mesh.material.dispose();
     const wire = this.mesh.children[0];
     if (wire) wire.material.dispose(); // ジオメトリは共有なのでdisposeしない
