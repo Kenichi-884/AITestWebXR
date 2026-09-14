@@ -130,9 +130,11 @@ class App {
       this._postProcessing.setSize(window.innerWidth, window.innerHeight);
     });
 
-    // PCテストモード(URLに ?debug を付けたときだけ)
+    // PCテストモード: localhost で開いた(=PC)か、URLに ?debug があるとき有効。?debug=0 で無効
     this._debug = null;
-    if (new URLSearchParams(window.location.search).has('debug')) {
+    const debugParam = new URLSearchParams(window.location.search).get('debug');
+    const isLocalhost = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+    if (debugParam !== '0' && (debugParam !== null || isLocalhost)) {
       import('../debug/DebugMode.js').then(({ DebugMode }) => { this._debug = new DebugMode(this); });
     }
 
