@@ -30,6 +30,24 @@ const MODEL_HEIGHT = 0.55;
  * モデルはテクスチャを潰さないよう弱め、簡易図形はネオン感を出すため強めにする。
  * 個体ごとの基準値は mesh.userData.baseEmissive に持たせる。
  */
+/**
+ * 手続き的アニメーションの調整値。
+ * ボーンを入れずに「生きている感じ」を出すためのパラメータ。
+ * TODO: 動きが硬い/大げさすぎる場合はここの数値を変える
+ */
+const ANIM = {
+  BOB_HEIGHT:     0.05,  // 歩行の上下動(m)
+  BOB_SPEED:      7.0,   // 歩く速さ。移動速度に比例させる
+  ROLL:           0.10,  // 左右の体重移動(ラジアン)
+  LEAN:           0.13,  // 進行方向への前傾(ラジアン)
+  SQUASH:         0.07,  // 着地時に潰れる量
+  HIT_SQUASH:     0.30,  // 被弾時に潰れる量
+  HIT_SQUASH_DUR: 0.18,  // 被弾の潰れが戻るまで(秒)
+  HIT_KNOCKBACK:  0.14,  // 被弾時にのけぞって下がる距離(m)
+  RAGE_RANGE:     2.0,   // この距離まで近づくと動きが激しくなる(m)
+  RAGE_BOOST:     1.9,   // 接近時の激しさの倍率
+};
+
 const MODEL_EMISSIVE    = 0.15;
 const FALLBACK_EMISSIVE = 0.8;
 const HIT_EMISSIVE      = 1.2;
@@ -120,6 +138,13 @@ export class Enemy {
     // スポーン時のスケールイン演出タイマー(秒)
     this._spawnTimer = 0.25;
 
+    // 手続き的アニメーション用の状態
+    // 位相を個体ごとにずらさないと、全員が同じタイミングで跳ねて不自然になる
+    this._animPhase      = Math.random() * Math.PI * 2;
+    this._animTime       = 0;
+    this._bobOffset      = 0;   // 今フレームの上下動。次フレームで打ち消す
+    this._hitSquashTimer = 0;
+
     // フレームごとに再利用するVector3（GCを避けるためキャッシュ）
     this._direction = new THREE.Vector3();
     this._reachRadiusSq = Config.ENEMY.REACH_RADIUS * Config.ENEMY.REACH_RADIUS;
@@ -162,11 +187,13 @@ export class Enemy {
       material.emissive.set(color);
       material.emissiveIntensity = MODEL_EMISSIVE;
       material.opacity = 1.0;
+      material.userData.baseOpacity = 1.0;
     } else {
       material.color.set(color);
       material.emissive.set(color);
       material.emissiveIntensity = FALLBACK_EMISSIVE;
       material.opacity = 0.88;
+      material.userData.baseOpacity = 0.88;
     }
   }
 
@@ -184,6 +211,7 @@ export class Enemy {
     const mesh = new THREE.Mesh(_template.geometry, material);
     mesh.castShadow = true;
     mesh.userData.baseEmissive = MODEL_EMISSIVE;
+    mesh.userData.baseOpacity  = 1.0;
     // destroy() で共有ジオメトリを破棄しないための目印
     mesh.userData.sharedGeometry = true;
     // update() の回転処理を「回転」ではなく「プレイヤーを向く」に切り替えるための目印
@@ -220,6 +248,7 @@ export class Enemy {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.castShadow = true;
     mesh.userData.baseEmissive = FALLBACK_EMISSIVE;
+    mesh.userData.baseOpacity  = 0.88;
 
     // ワイヤーフレームオーバーレイ: サイバーパンク風の縁取り
     const wireMat = new THREE.MeshBasicMaterial({
@@ -258,15 +287,21 @@ export class Enemy {
       if (this._spawnTimer <= 0) this.mesh.scale.setScalar(1);
     }
 
+    // 前フレームで足した上下動をいったん戻す。
+    // 戻さずに毎フレーム足すと、敵がどんどん浮き上がってしまう
+    this.mesh.position.y -= this._bobOffset;
+    this._bobOffset = 0;
+
     // ---- 移動: プレイヤーに向かって直進 ----
     this._direction.subVectors(playerPosition, this.mesh.position).normalize();
     this.mesh.position.addScaledVector(this._direction, this.speed * delta);
 
     // ---- 回転演出 ----
     if (this.mesh.userData.isModel) {
-      // モデルは回すと転がって見えるので、プレイヤーの方を向かせて上下に揺らす
+      // モデルは回すと転がって見えるので、プレイヤーの方を向かせる。
+      // 歩行の揺れは lookAt の後にローカル回転で足す(向きを崩さないため)
       this.mesh.lookAt(playerPosition);
-      this.mesh.rotation.z = Math.sin(performance.now() * 0.004) * 0.08;
+      if (this._spawnTimer <= 0) this._applyWalkAnimation(delta, playerPosition);
     } else {
       this.mesh.rotation.x += delta * 1.5;
       this.mesh.rotation.y += delta * 2.0;
@@ -287,6 +322,50 @@ export class Enemy {
   }
 
   /**
+   * 歩行アニメーション(ボーンを使わない手続き的アニメーション)
+   *
+   * 上下動・左右の体重移動・前傾・潰れを重ねて「生きている」感じを出す。
+   * ボーンが無くても歩いているように見せるのが狙い。
+   * NOTE: lookAt() の直後に呼ぶこと。rotateX/Z はローカル回転なので
+   *       lookAt で決まった向きを保ったまま傾きだけ足せる。
+   *
+   * @param {number} delta
+   * @param {THREE.Vector3} playerPosition
+   */
+  _applyWalkAnimation(delta, playerPosition) {
+    // プレイヤーに近いほど動きを激しくして、迫ってくる圧を出す
+    const dist = this.mesh.position.distanceTo(playerPosition);
+    const rage = dist < ANIM.RAGE_RANGE
+      ? 1 + (1 - dist / ANIM.RAGE_RANGE) * (ANIM.RAGE_BOOST - 1)
+      : 1;
+
+    // 歩幅は移動速度に比例させる(速い敵ほど忙しく歩く)
+    this._animTime += delta * ANIM.BOB_SPEED * this.speed * rage;
+    const t = this._animTime + this._animPhase;
+
+    // 上下動: abs(sin) にすると「左足・右足」の2拍子になる
+    const step = Math.abs(Math.sin(t));
+    this._bobOffset = step * ANIM.BOB_HEIGHT * rage;
+
+    // 体重移動(左右の揺れ)と前傾
+    this.mesh.rotateZ(Math.sin(t * 0.5) * ANIM.ROLL * rage);
+    this.mesh.rotateX(ANIM.LEAN * rage);
+
+    // 着地の瞬間に潰れる(スカッシュ&ストレッチ)
+    let squash = (1 - step) * ANIM.SQUASH;
+
+    // 被弾直後はさらに強く潰す
+    if (this._hitSquashTimer > 0) {
+      this._hitSquashTimer -= delta;
+      squash += (Math.max(0, this._hitSquashTimer) / ANIM.HIT_SQUASH_DUR) * ANIM.HIT_SQUASH;
+    }
+    // 縦に潰れたぶん横に広がると、弾力があるように見える
+    this.mesh.scale.set(1 + squash * 0.7, 1 - squash, 1 + squash * 0.7);
+
+    this.mesh.position.y += this._bobOffset;
+  }
+
+  /**
    * 弾に当たったときの処理
    * @param {number} damage - ダメージ量(デフォルト1)
    */
@@ -299,6 +378,13 @@ export class Enemy {
     // ヒットフラッシュ
     this.mesh.material.emissiveIntensity = HIT_EMISSIVE;
     this._hitFlashTimer = 0.1;
+
+    if (this.mesh.userData.isModel) {
+      // 潰れてのけぞる。lookAt でプレイヤーを向いているので、
+      // ローカル +Z がプレイヤーと反対方向になる
+      this._hitSquashTimer = ANIM.HIT_SQUASH_DUR;
+      this.mesh.translateZ(ANIM.HIT_KNOCKBACK);
+    }
 
     if (this.hp <= 0) {
       this._defeat();
@@ -322,7 +408,10 @@ export class Enemy {
     this.mesh.rotation.z += delta * 6;
 
     // フェードアウト (本体 + ワイヤーフレーム)
-    const opacity = Math.max(0, 0.88 * (1 - t));
+    // 通常時の不透明度から下げる。0.88固定だとモデル(1.0)が撃破の瞬間に
+    // 急に薄くなってしまう
+    const base = this.mesh.userData.baseOpacity ?? 0.88;
+    const opacity = Math.max(0, base * (1 - t));
     this.mesh.material.opacity = opacity;
     const wire = this.mesh.children[0];
     if (wire?.material) wire.material.opacity = opacity * 0.5;
@@ -398,6 +487,11 @@ export class Enemy {
     this._dying        = false; // 吹き飛びアニメーションをキャンセル
     this._dyingElapsed = 0;
     this._spawnTimer   = 0.25; // スポーンアニメーションをリセット
+    // アニメーション状態も戻す。位相は引き直して個体差を保つ
+    this._animPhase      = Math.random() * Math.PI * 2;
+    this._animTime       = 0;
+    this._bobOffset      = 0;
+    this._hitSquashTimer = 0;
     this.mesh.scale.setScalar(0.01);
 
     // ウェーブに応じた色を更新(ソリッド + ワイヤーフレーム両方)
