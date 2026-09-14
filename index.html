@@ -232,29 +232,37 @@
       pointer-events: none;
     }
 
-    /* スコア (上中央) */
+    /* スコア (上中央・グラスパネル付き / ウェーブ・HP・弾数と統一) */
     #score-display {
       position: absolute;
-      top: 36px;
+      top: 32px;
       left: 50%;
       transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 3px;
       text-align: center;
       pointer-events: none;
+      background: var(--glass);
+      border: 1px solid var(--glass-bd);
+      border-radius: 10px;
+      padding: 10px 24px 12px;
     }
     #score-label {
-      font-size: 0.6rem;
+      font-size: 0.58rem;
       letter-spacing: 0.3em;
       color: var(--dim);
       font-family: var(--mono);
       display: block;
-      margin-bottom: 2px;
     }
     #score-value {
       font-size: 2rem;
       font-family: var(--mono);
-      font-weight: 700;
-      color: #fff;
-      text-shadow: 0 0 10px rgba(255,255,255,0.3);
+      font-weight: 800;
+      color: var(--cyan);
+      text-shadow: var(--glow-cyan);
+      line-height: 1;
       display: inline-block;
     }
     #score-value.score-pop {
@@ -262,11 +270,19 @@
     }
     @keyframes scorePop {
       0%   { transform: scale(1.45); color: var(--warn); text-shadow: 0 0 16px var(--warn); }
-      100% { transform: scale(1);    color: #fff;        text-shadow: 0 0 10px rgba(255,255,255,0.3); }
+      100% { transform: scale(1);    color: var(--cyan); text-shadow: var(--glow-cyan); }
+    }
+    /* 死亡ペナルティ等でスコアが減った時の演出(加算のscorePopと対になる縮小+赤) */
+    #score-value.score-pop-negative {
+      animation: scorePopNegative 0.3s ease-out;
+    }
+    @keyframes scorePopNegative {
+      0%   { transform: scale(0.8); color: var(--danger); text-shadow: 0 0 16px var(--danger); }
+      100% { transform: scale(1);   color: var(--cyan);   text-shadow: var(--glow-cyan); }
     }
     .score-popup {
       position: absolute;
-      top: -4px;
+      top: -2px;
       left: 50%;
       transform: translateX(-50%);
       color: var(--warn);
@@ -282,12 +298,21 @@
       0%   { opacity: 1; transform: translate(-50%, 0);     }
       100% { opacity: 0; transform: translate(-50%, -32px); }
     }
+    .score-popup.score-popup-negative {
+      color: var(--danger);
+      text-shadow: 0 0 8px var(--danger);
+      animation: scorePopupFall 0.85s ease-out forwards;
+    }
+    @keyframes scorePopupFall {
+      0%   { opacity: 1; transform: translate(-50%, 0);    }
+      100% { opacity: 0; transform: translate(-50%, 24px); }
+    }
 
-    /* コンボ (スコア右横) */
+    /* コンボ (スコアパネル右、パネルの数値行に高さを揃える) */
     #combo-display {
       position: absolute;
-      top: 38px;
-      left: calc(50% + 120px);
+      top: 58px;
+      left: calc(50% + 148px);
       transform-origin: left center;
       transform: scale(0.7);
       color: var(--orange);
