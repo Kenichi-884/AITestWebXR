@@ -357,6 +357,7 @@ export class EnemySlime {
       enemy: this,
       score: Config.ENEMY.SCORE_PER_KILL,
     });
+    EventBus.emit('sound:play', { id: 'slime-defeat' });
     this._disposeMesh();
   }
 

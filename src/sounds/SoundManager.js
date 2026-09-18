@@ -22,6 +22,7 @@
  *   'wave-up'    - ウェーブ進行ファンファーレ (game:wave-update を自前で購読)
  *   'spawn'      - 敵スポーン              (enemy:spawned を自前で購読)
  *   'empty'      - 弾切れ時の空撃ち        (未使用 / 手動で play('empty') 可)
+ *   'slime-defeat' - スライム撃破(ドラクエ風の「テッテレー」)(Enemy_Slime.js から発火)
  *
  * 音の作り方(_playTone の1レイヤー):
  *   type      : 'sine' | 'square' | 'sawtooth' | 'triangle' | 'noise'
@@ -52,6 +53,7 @@ const SOUND_CONFIG = {
   WAVE_UP_VOLUME:    0.70,
   SPAWN_VOLUME:      0.30,
   EMPTY_VOLUME:      0.45,
+  SLIME_DEFEAT_VOLUME: 0.55,
 
   BGM_VOLUME:        0.35,   // BGM全体の音量(効果音とは独立)
   BGM_FADE_IN:       1.50,   // BGMのフェードイン(秒)
@@ -543,6 +545,27 @@ export class SoundManager {
         { type: 'sine', freq: 2093, duration: 0.22, volume: 0.15,
           attack: 0.01, decay: 0.22, delay: 0.20 },
       ],
+
+      // スライム撃破: ドラクエのモンスター撃破時のような「テッテレー」ジングル。
+      // 下降する前振り(タラリラ)→ 主音に着地する明るい和音、で短く鳴らす。
+      'slime-defeat': [
+        // 前振り: 軽やかに下降する4音(矩形波でファミコン風に)
+        { type: 'square', freq: 988, duration: 0.09, volume: S.SLIME_DEFEAT_VOLUME * 0.55,
+          attack: 0.003, decay: 0.09, delay: 0.00, filter: { type: 'lowpass', freq: 4000 } },
+        { type: 'square', freq: 831, duration: 0.09, volume: S.SLIME_DEFEAT_VOLUME * 0.55,
+          attack: 0.003, decay: 0.09, delay: 0.08, filter: { type: 'lowpass', freq: 4000 } },
+        { type: 'square', freq: 740, duration: 0.09, volume: S.SLIME_DEFEAT_VOLUME * 0.55,
+          attack: 0.003, decay: 0.09, delay: 0.16, filter: { type: 'lowpass', freq: 4000 } },
+        { type: 'square', freq: 622, duration: 0.09, volume: S.SLIME_DEFEAT_VOLUME * 0.55,
+          attack: 0.003, decay: 0.09, delay: 0.24, filter: { type: 'lowpass', freq: 4000 } },
+        // 着地: 明るい主和音でパッと締める
+        { type: 'square', freq: 988, duration: 0.35, volume: S.SLIME_DEFEAT_VOLUME * 0.60,
+          attack: 0.004, decay: 0.35, delay: 0.34, filter: { type: 'lowpass', freq: 4500 } },
+        { type: 'triangle', freq: 1245, duration: 0.35, volume: S.SLIME_DEFEAT_VOLUME * 0.30,
+          attack: 0.004, decay: 0.35, delay: 0.34 },
+        { type: 'triangle', freq: 1568, duration: 0.35, volume: S.SLIME_DEFEAT_VOLUME * 0.22,
+          attack: 0.004, decay: 0.35, delay: 0.34 },
+      ],
     };
   }
 
@@ -572,6 +595,7 @@ export class SoundManager {
       case 'wave-up':    return SOUND_CONFIG.WAVE_UP_VOLUME;
       case 'spawn':      return SOUND_CONFIG.SPAWN_VOLUME;
       case 'empty':      return SOUND_CONFIG.EMPTY_VOLUME;
+      case 'slime-defeat': return SOUND_CONFIG.SLIME_DEFEAT_VOLUME;
       default:           return 0.8;
     }
   }
