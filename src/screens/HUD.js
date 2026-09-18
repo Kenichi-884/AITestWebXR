@@ -115,28 +115,33 @@ export class HUD {
     this._score = data.score;
     this._updateScoreDisplay();
 
-    if (data.delta > 0) {
+    if (data.delta !== 0) {
       this._popScore(data.delta, data.multiplier ?? 1);
     }
   }
 
   /**
-   * スコア加算時のポップ演出(数字の拡大 + "+delta ×multiplier"の浮遊テキスト)
-   * @param {number} delta
-   * @param {number} multiplier コンボ倍率(1より大きいと倍率を表示)
+   * スコア加算/減算時のポップ演出
+   * 加算: 数字が金色に拡大 + "+delta ×multiplier"の浮遊テキスト(上昇)
+   * 減算: 数字が赤く縮小 + "delta"(マイナス符号込み)の浮遊テキスト(下降)
+   * @param {number} delta 正なら加算、負なら減算(死亡ペナルティ等)
+   * @param {number} multiplier コンボ倍率(加算かつ1より大きいときだけ表示)
    */
   _popScore(delta, multiplier = 1) {
+    const negative = delta < 0;
+
     if (this._scoreEl) {
-      this._scoreEl.classList.remove('score-pop');
+      const cls = negative ? 'score-pop-negative' : 'score-pop';
+      this._scoreEl.classList.remove('score-pop', 'score-pop-negative');
       void this._scoreEl.offsetWidth; // 連続加算でもアニメーションを再始動させるための強制リフロー
-      this._scoreEl.classList.add('score-pop');
+      this._scoreEl.classList.add(cls);
     }
 
     const scoreDisplay = document.getElementById('score-display');
     if (!scoreDisplay) return;
     const popup = document.createElement('div');
-    popup.className = 'score-popup';
-    popup.textContent = multiplier > 1 ? `+${delta}  ×${multiplier}` : `+${delta}`;
+    popup.className = negative ? 'score-popup score-popup-negative' : 'score-popup';
+    popup.textContent = !negative && multiplier > 1 ? `+${delta}  ×${multiplier}` : `${negative ? '' : '+'}${delta}`;
     scoreDisplay.appendChild(popup);
     setTimeout(() => popup.remove(), 800);
   }
